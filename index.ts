@@ -276,8 +276,8 @@ export default definePlugin({
             const gifs = await searchFromProvider(query, 50);
             console.log("[GifProvider] Search results:", gifs.length);
             if (gifs.length > 0) {
-                // Discord expects { categories: [], gifs: [] } format
-                return { body: { categories: [], gifs } };
+                // Return array directly for search results
+                return { body: gifs };
             }
         } catch (err) {
             console.error("[GifProvider] Search error:", err);
@@ -291,8 +291,8 @@ export default definePlugin({
             const gifs = await trendingFromProvider(50);
             console.log("[GifProvider] Trending results:", gifs.length);
             if (gifs.length > 0) {
-                // Discord expects { categories: [], gifs: [] } format
-                return { body: { categories: [], gifs } };
+                // Return array directly for search results
+                return { body: gifs };
             }
         } catch (err) {
             console.error("[GifProvider] Trending error:", err);
