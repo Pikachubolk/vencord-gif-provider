@@ -80,15 +80,19 @@ function transformSerikaToDiscord(data: any): DiscordGif[] {
     return gifs.map((gif: any) => {
         // gif.url is the actual .gif file URL (e.g. https://cdn.ado.wtf/gifs/.../xxx.gif)
         const gifUrl = gif.url || gif.originalUrl;
+        // Use webmUrl if available, otherwise fall back to gif
+        const videoUrl = gif.webmUrl || gifUrl;
+        // Use thumbnailUrl for preview (webp is smaller than full gif)
+        const previewUrl = gif.thumbnailUrl || gifUrl;
         return {
             id: gif.id?.toString() || gif.slug || Math.random().toString(36),
             title: gif.title || "",
-            url: gifUrl,      // URL to post in chat (the actual gif)
-            src: gifUrl,      // Video source (Discord can use gif here)
-            gif_src: gifUrl,  // GIF source
+            url: gifUrl,       // URL to post in chat (the actual gif)
+            src: videoUrl,     // Video source for playback (webm preferred)
+            gif_src: gifUrl,   // GIF source fallback
             width: gif.width || 200,
             height: gif.height || 200,
-            preview: gifUrl   // Preview image (use gif itself, Discord will handle it)
+            preview: previewUrl // Thumbnail preview (webp)
         };
     });
 }
