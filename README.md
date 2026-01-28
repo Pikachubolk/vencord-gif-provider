@@ -20,7 +20,7 @@
 
 - 🔄 **Switch GIF providers** - Choose from 5 different GIF services
 - ⚡ **Instant switching** - No restart required, changes apply immediately
-- 🏠 **Self-hosted support** - Use your own [Serika GIFs](https://github.com/serika-dev/serika-gifs) instance
+- 🏠 **Self-hosted support** - Use your own Serika GIFs instance
 - 🔒 **API key support** - Configure private instances with authentication
 - 🎨 **Clean integration** - Seamlessly replaces Discord's default GIF picker
 
@@ -125,7 +125,7 @@ Open **Vencord Settings** → **Plugins** → **GifProvider**
 
 ### Serika GIFs Setup
 
-[Serika GIFs](https://github.com/serika-dev/serika-gifs) is a self-hosted GIF platform that works **without an API key**!
+Serika GIFs is a self-hosted GIF platform that works **without an API key**!
 
 1. Select "Serika GIFs" as your provider
 2. Enter your instance URL (default: `https://gifs.serika.dev`)
@@ -239,7 +239,6 @@ This project is licensed under GPL-3.0-or-later, same as Vencord.
 ## 🙏 Credits
 
 - [Vencord](https://github.com/Vendicated/Vencord) - The amazing Discord client mod
-- [Serika GIFs](https://github.com/serika-dev/serika-gifs) - Self-hosted GIF platform
 - All the GIF providers for their APIs
 
 ---
