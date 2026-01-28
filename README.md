@@ -1,90 +1,187 @@
-# GIF Provider Switcher
+<div align="center">
 
-A Vencord plugin that allows you to switch between different GIF providers in Discord's GIF picker.
+# 🎬 GIF Provider
 
-## Supported Providers
+### A Vencord plugin to switch between GIF providers in Discord
 
-- **Tenor** (Default) - Discord's default GIF provider
-- **Giphy** - The world's largest GIF library
-- **Klipy** - A modern GIF platform
-- **Serika GIFs** - Self-hosted GIF library (configurable instance URL)
-- **Imgur** - Popular image and GIF hosting
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+[![Vencord](https://img.shields.io/badge/Vencord-Plugin-7289DA.svg)](https://vencord.dev)
 
-## Installation
+[Installation](#-installation) •
+[Providers](#-supported-providers) •
+[Configuration](#%EF%B8%8F-configuration) •
+[Development](#-development)
 
-### For User Plugins
+</div>
 
-1. Go to your Vencord plugins folder:
-   - Windows: `%appdata%/Vencord/plugins/`
-   - macOS: `~/Library/Application Support/Vencord/plugins/`
-   - Linux: `~/.config/Vencord/plugins/`
+---
 
-2. Create a folder called `GifProvider`
+## ✨ Features
 
-3. Copy `index.ts` into the `GifProvider` folder
+- 🔄 **Switch GIF providers** - Choose from 5 different GIF services
+- ⚡ **Instant switching** - No restart required, changes apply immediately
+- 🏠 **Self-hosted support** - Use your own [Serika GIFs](https://github.com/serika-dev/serika-gifs) instance
+- 🔒 **API key support** - Configure private instances with authentication
+- 🎨 **Clean integration** - Seamlessly replaces Discord's default GIF picker
 
-4. Restart Discord or reload Vencord
+## 🎯 Supported Providers
 
-### Building from Source
+| Provider | Description | API Key Required |
+|----------|-------------|------------------|
+| **Tenor** | Discord's default provider | ❌ Built-in |
+| **Giphy** | World's largest GIF library | ❌ Public beta |
+| **Klipy** | Modern GIF platform | ❌ Optional |
+| **Serika GIFs** | Self-hosted GIF library | ❌ Optional |
+| **Imgur** | Popular image/GIF hosting | ❌ Built-in |
 
-If you're developing Vencord locally:
+## 📦 Installation
 
-1. Clone this repo into `src/userplugins/GifProvider/`
-2. Build Vencord: `pnpm build`
-3. The plugin will be available in your Vencord settings
+### Prerequisites
 
-## Configuration
+You need [Vencord](https://vencord.dev) installed and built from source to use custom plugins.
 
-Open Vencord Settings → Plugins → GIF Provider
+### Quick Install
 
-### Settings
+1. **Navigate to your Vencord source directory:**
+   ```bash
+   cd /path/to/Vencord
+   ```
+
+2. **Create the userplugins folder** (if it doesn't exist):
+   ```bash
+   mkdir -p src/userplugins
+   ```
+
+3. **Clone this plugin:**
+   ```bash
+   git clone https://github.com/Pikachubolk/vencord-gif-provider.git src/userplugins/GifProvider
+   ```
+
+4. **Build Vencord:**
+   ```bash
+   pnpm build
+   ```
+
+5. **Restart Discord** and enable the plugin in Vencord Settings → Plugins
+
+### Manual Install
+
+1. Download `index.ts` from this repository
+2. Place it in `Vencord/src/userplugins/GifProvider/index.ts`
+3. Build and restart as described above
+
+## ⚙️ Configuration
+
+Open **Vencord Settings** → **Plugins** → **GifProvider**
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Provider | Select your preferred GIF provider | Tenor |
-| Serika Instance | URL of your Serika GIFs instance | https://gifs.serika.dev |
-| Klipy API Key | Your Klipy API key (optional) | - |
+| **Provider** | Select your preferred GIF provider | Tenor |
+| **Serika Instance** | URL of your Serika GIFs instance | `https://gifs.serika.dev` |
+| **Serika API Key** | API key for private instances | - |
 
-## Usage
+### Serika GIFs Setup
 
-1. Enable the plugin in Vencord settings
-2. Select your preferred provider from the dropdown
-3. Open the GIF picker in Discord - it will now use your selected provider!
+[Serika GIFs](https://github.com/serika-dev/serika-gifs) is a self-hosted GIF platform. To use it:
 
-The GIF picker title will show which provider is currently active (e.g., "GIFs (Giphy)").
+1. Deploy your own instance or use the public one at `https://gifs.serika.dev`
+2. Select "Serika GIFs" as your provider
+3. Enter your instance URL (e.g., `https://gifs.yourdomain.com`)
+4. (Optional) Add your API key for private instances
 
-## API Notes
+## 🎮 Usage
 
-### Tenor
-Uses Discord's built-in API key for seamless integration.
+1. **Enable the plugin** in Vencord settings
+2. **Select your provider** from the dropdown menu
+3. **Open Discord's GIF picker** (click the GIF button in chat)
+4. **Search or browse** - GIFs now come from your selected provider!
 
-### Giphy
-Uses the public beta API key. For production use, consider getting your own key.
+## 🔧 Development
 
-### Klipy
-Optional API key for higher rate limits.
+### Project Structure
 
-### Serika GIFs
-Configure your own instance URL. Compatible with self-hosted instances.
-
-### Imgur
-Searches Imgur's gallery for animated content.
-
-## Development
-
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/vencord-gif-provider.git
-
-# Install in Vencord userplugins
-cp -r vencord-gif-provider /path/to/vencord/src/userplugins/GifProvider
+```
+GifProvider/
+├── index.ts          # Main plugin file
+├── README.md         # This file
+└── package.json      # Package metadata
 ```
 
-## License
+### Building
 
-GPL-3.0-or-later - Same as Vencord
+```bash
+# In your Vencord directory
+pnpm build
 
-## Credits
+# For development with hot reload
+pnpm watch
+```
 
-- [Vencord](https://github.com/Vendicated/Vencord) - The Discord client mod
-- [Serika GIFs](https://github.com/yourusername/SerikaGIFs) - Self-hosted GIF platform
+### Adding New Providers
+
+To add a new GIF provider, you need to:
+
+1. Add the provider to the settings options
+2. Create a transform function for the API response
+3. Create search and trending functions
+4. Add cases to the dispatcher switches
+
+```typescript
+// Example: Adding a new provider
+async function searchNewProvider(query: string, limit: number): Promise<GifResult[]> {
+    const url = `https://api.newprovider.com/search?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return transformNewProviderResults(data);
+}
+```
+
+### Debugging
+
+Open the browser console (Ctrl+Shift+I) and look for `[GifProvider]` logs:
+
+```javascript
+// Test search manually
+Vencord.Plugins.plugins.GifProvider.searchGifs("cats", 10)
+```
+
+## 📝 API Notes
+
+| Provider | Notes |
+|----------|-------|
+| **Tenor** | Uses Discord's built-in API key for seamless integration |
+| **Giphy** | Uses the public beta API key (`dc6zaTOxFJmzC`) |
+| **Klipy** | Public API, optional key for higher limits |
+| **Serika** | Fully configurable, supports authentication |
+| **Imgur** | Uses public Client-ID for gallery searches |
+
+## 🐛 Known Issues
+
+- **Patches may break** - Discord updates can change internal code patterns. If the plugin stops working after a Discord update, the patches may need updating.
+- **Imgur results** - Imgur's API returns mixed content, so only animated GIFs are filtered.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+## 📄 License
+
+This project is licensed under GPL-3.0-or-later, same as Vencord.
+
+## 🙏 Credits
+
+- [Vencord](https://github.com/Vendicated/Vencord) - The amazing Discord client mod
+- [Serika GIFs](https://github.com/serika-dev/serika-gifs) - Self-hosted GIF platform
+- All the GIF providers for their APIs
+
+---
+
+<div align="center">
+
+**Made with ❤️ for the Vencord community**
+
+</div>

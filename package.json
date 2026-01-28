@@ -7,8 +7,12 @@
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Hoyoked/vencord-gif-provider.git"
+    "url": "https://github.com/Pikachubolk/vencord-gif-provider.git"
   },
+  "bugs": {
+    "url": "https://github.com/Pikachubolk/vencord-gif-provider/issues"
+  },
+  "homepage": "https://github.com/Pikachubolk/vencord-gif-provider#readme",
   "keywords": [
     "vencord",
     "discord",
@@ -17,6 +21,7 @@
     "tenor",
     "giphy",
     "klipy",
+    "serika",
     "imgur"
   ]
 }
