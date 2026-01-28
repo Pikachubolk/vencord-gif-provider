@@ -251,6 +251,13 @@ export default definePlugin({
                     return self.handleSearch(query);
                 }
 
+                // /gifs/trending-gifs returns just an array
+                if (url.includes("/gifs/trending-gifs") || url.includes("gifs/trending-gifs")) {
+                    console.log("[GifProvider] Intercepted trending-gifs:", url);
+                    return self.handleTrendingGifs();
+                }
+
+                // /gifs/trending returns { categories: [], gifs: [] }
                 if (url.includes("/gifs/trending") || url.includes("gifs/trending")) {
                     console.log("[GifProvider] Intercepted trending:", url);
                     return self.handleTrending();
@@ -299,6 +306,21 @@ export default definePlugin({
         }
         // Fall back to original
         return this.originalGet({ url: "/gifs/trending" });
+    },
+
+    async handleTrendingGifs(): Promise<any> {
+        try {
+            const gifs = await trendingFromProvider(50);
+            console.log("[GifProvider] TrendingGifs results:", gifs.length);
+            if (gifs.length > 0) {
+                // Discord /gifs/trending-gifs expects just an array
+                return { body: gifs };
+            }
+        } catch (err) {
+            console.error("[GifProvider] TrendingGifs error:", err);
+        }
+        // Fall back to original
+        return this.originalGet({ url: "/gifs/trending-gifs" });
     },
 
     stop() {
