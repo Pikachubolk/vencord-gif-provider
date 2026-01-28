@@ -1,13 +1,15 @@
-name: Validate Plugin
+name: Build & Validate Plugin
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  release:
+    types: [created]
 
 jobs:
-  validate:
+  build:
     runs-on: ubuntu-latest
     
     steps:
@@ -31,12 +33,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
-          cache-dependency-path: vencord/pnpm-lock.yaml
 
       - name: Install Vencord dependencies
         working-directory: vencord
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Copy plugin to userplugins
         run: |
@@ -56,23 +56,33 @@ jobs:
             exit 1
           fi
 
-  lint:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Check TypeScript syntax
+      - name: Create plugin package
         run: |
-          npm install -g typescript
-          # Basic syntax check (will fail on type errors since we don't have Vencord types)
-          # This just validates the file is parseable TypeScript
-          echo "Checking TypeScript syntax..."
-          npx tsc --noEmit --allowJs --checkJs false --skipLibCheck --target ES2022 --moduleResolution node index.ts 2>&1 || true
-          echo "✅ Syntax check complete"
+          mkdir -p artifact/GifProvider
+          cp plugin/index.ts artifact/GifProvider/
+          cp plugin/README.md artifact/
+          echo "Place the GifProvider folder in your Vencord src/userplugins/ directory" > artifact/INSTALL.txt
+          cd artifact && zip -r ../GifProvider-plugin.zip .
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GifProvider-plugin
+          path: |
+            artifact/GifProvider/
+            artifact/README.md
+            artifact/INSTALL.txt
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GifProvider-plugin-zip
+          path: GifProvider-plugin.zip
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: GifProvider-plugin.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

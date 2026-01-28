@@ -36,39 +36,62 @@
 
 ## 📦 Installation
 
-### Prerequisites
+### Option 1: Download Pre-built (Easiest)
 
-You need [Vencord](https://vencord.dev) installed and built from source to use custom plugins.
+> ⚠️ **Note:** Custom plugins require building Vencord from source. Prebuilt Vencord versions don't support external plugins.
 
-### Quick Install
+1. **Download** the latest plugin from [GitHub Actions](https://github.com/Pikachubolk/vencord-gif-provider/actions) (click the latest run → Artifacts → GifProvider-plugin)
 
-1. **Navigate to your Vencord source directory:**
-   ```bash
-   cd /path/to/Vencord
-   ```
+2. **Follow the build-from-source instructions below** to install it
 
-2. **Create the userplugins folder** (if it doesn't exist):
+### Option 2: Build from Source
+
+#### Prerequisites
+
+You need [Vencord](https://vencord.dev) built from source. If you haven't done this:
+
+```bash
+# Clone Vencord
+git clone https://github.com/Vendicated/Vencord
+cd Vencord
+
+# Install dependencies
+pnpm install
+
+# Build once to verify it works
+pnpm build
+```
+
+#### Install the Plugin
+
+1. **Create the userplugins folder** (if it doesn't exist):
    ```bash
    mkdir -p src/userplugins
    ```
 
-3. **Clone this plugin:**
+2. **Clone this plugin:**
    ```bash
    git clone https://github.com/Pikachubolk/vencord-gif-provider.git src/userplugins/GifProvider
    ```
 
-4. **Build Vencord:**
+3. **Build Vencord:**
    ```bash
    pnpm build
    ```
 
+4. **Inject into Discord:**
+   ```bash
+   pnpm inject
+   ```
+
 5. **Restart Discord** and enable the plugin in Vencord Settings → Plugins
 
-### Manual Install
+### Option 3: Use Official Vencord (Coming Soon?)
 
-1. Download `index.ts` from this repository
-2. Place it in `Vencord/src/userplugins/GifProvider/index.ts`
-3. Build and restart as described above
+Want this plugin in the official Vencord? Show your support:
+- ⭐ Star this repository
+- 👍 React to the [plugin submission issue](https://github.com/Pikachubolk/vencord-gif-provider/issues) (if exists)
+- The plugin may be submitted to [Vencord's official repository](https://github.com/Vendicated/Vencord) in the future
 
 ## ⚙️ Configuration
 
@@ -188,6 +211,26 @@ Contributions are welcome! Please:
 1. Fork the repository
 2. Create a feature branch
 3. Submit a pull request
+
+### Submitting to Official Vencord
+
+To get this plugin into the official Vencord repository:
+
+1. **Requirements** (from [Vencord Plugin Submission](https://docs.vencord.dev/plugins/submission/)):
+   - Plugin must be useful to a wide audience
+   - Must follow Vencord's code style
+   - Must not break Discord ToS more than Vencord already does
+   - Must have proper error handling
+
+2. **Process**:
+   - Fork [Vendicated/Vencord](https://github.com/Vendicated/Vencord)
+   - Add the plugin to `src/plugins/` (not userplugins)
+   - Add yourself to `src/utils/constants.ts` Devs object
+   - Submit a PR with a good description
+
+3. **Current Status**: This plugin is a user plugin. If you want it official, consider:
+   - Opening an issue requesting official submission
+   - Contributing to make it meet Vencord's standards
 
 ## 📄 License
 
