@@ -7,6 +7,8 @@
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
+import { findByPropsLazy, findLazy, mapMangledModuleLazy } from "@webpack";
+import { FluxDispatcher } from "@webpack/common";
 
 export const settings = definePluginSettings({
     provider: {
@@ -47,8 +49,20 @@ export const settings = definePluginSettings({
     },
 });
 
+// Discord GIF format interface
+interface DiscordGif {
+    id: string;
+    title: string;
+    url: string;
+    src: string;
+    gif_src: string;
+    width: number;
+    height: number;
+    preview: string;
+}
+
 // Transform Giphy response to Discord GIF format
-function transformGiphyToDiscord(data: any) {
+function transformGiphyToDiscord(data: any): DiscordGif[] {
     return (data.data || []).map((gif: any) => ({
         id: gif.id,
         title: gif.title || "",
@@ -57,12 +71,12 @@ function transformGiphyToDiscord(data: any) {
         gif_src: gif.images?.original?.url || gif.images?.downsized?.url,
         width: parseInt(gif.images?.original?.width) || 200,
         height: parseInt(gif.images?.original?.height) || 200,
-        preview: gif.images?.fixed_height_small?.url || gif.images?.preview_gif?.url || gif.images?.downsized_small?.url
+        preview: gif.images?.fixed_height_small?.url || gif.images?.preview_gif?.url
     }));
 }
 
 // Transform Serika response to Discord GIF format
-function transformSerikaToDiscord(data: any) {
+function transformSerikaToDiscord(data: any): DiscordGif[] {
     const gifs = data.gifs || data.data || [];
     return gifs.map((gif: any) => ({
         id: gif.id?.toString() || gif.slug || Math.random().toString(36),
@@ -77,7 +91,7 @@ function transformSerikaToDiscord(data: any) {
 }
 
 // Transform Imgur response to Discord GIF format
-function transformImgurToDiscord(data: any) {
+function transformImgurToDiscord(data: any): DiscordGif[] {
     const items = (data.data || []).filter((item: any) =>
         item.animated || item.type?.includes("gif") || item.mp4 || item.link?.endsWith(".gif")
     );
@@ -94,7 +108,7 @@ function transformImgurToDiscord(data: any) {
 }
 
 // Transform Klipy response to Discord GIF format
-function transformKlipyToDiscord(data: any) {
+function transformKlipyToDiscord(data: any): DiscordGif[] {
     const results = data.results || data.data || [];
     return results.map((gif: any) => ({
         id: gif.id,
@@ -108,78 +122,98 @@ function transformKlipyToDiscord(data: any) {
     }));
 }
 
-async function fetchFromProvider(query: string, limit: number, type: "search" | "trending"): Promise<any[]> {
+// Search GIFs from provider
+async function searchFromProvider(query: string, limit: number = 50): Promise<DiscordGif[]> {
     const provider = settings.store.provider;
-    console.log(`[GifProvider] fetchFromProvider: ${type}, query="${query}", provider=${provider}`);
+    if (provider === "tenor") return [];
 
-    switch (provider) {
-        case "giphy": {
-            const apiKey = settings.store.giphyApiKey?.trim();
-            if (!apiKey) throw new Error("Giphy API key required");
-
-            const endpoint = type === "search"
-                ? `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`
-                : `https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`;
-
-            const res = await fetch(endpoint);
-            const data = await res.json();
-            return transformGiphyToDiscord(data);
+    try {
+        switch (provider) {
+            case "giphy": {
+                const apiKey = settings.store.giphyApiKey?.trim();
+                if (!apiKey) return [];
+                const res = await fetch(`https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`);
+                return transformGiphyToDiscord(await res.json());
+            }
+            case "serika": {
+                const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
+                const apiKey = settings.store.serikaApiKey?.trim();
+                const headers: Record<string, string> = {};
+                if (apiKey) headers["X-API-Key"] = apiKey;
+                const res = await fetch(`${baseUrl}/api/gifs?search=${encodeURIComponent(query)}&limit=${limit}`, { headers });
+                return transformSerikaToDiscord(await res.json());
+            }
+            case "imgur": {
+                const clientId = settings.store.imgurClientId?.trim();
+                if (!clientId) return [];
+                const res = await fetch(`https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`, {
+                    headers: { Authorization: `Client-ID ${clientId}` }
+                });
+                return transformImgurToDiscord(await res.json()).slice(0, limit);
+            }
+            case "klipy": {
+                const apiKey = settings.store.klipyApiKey?.trim();
+                if (!apiKey) return [];
+                const res = await fetch(`https://api.klipy.co/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`);
+                return transformKlipyToDiscord(await res.json());
+            }
+            default: return [];
         }
-
-        case "serika": {
-            const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
-            const apiKey = settings.store.serikaApiKey?.trim();
-
-            const headers: Record<string, string> = {};
-            if (apiKey) headers["X-API-Key"] = apiKey;
-
-            const endpoint = type === "search"
-                ? `${baseUrl}/api/gifs?search=${encodeURIComponent(query)}&limit=${limit}`
-                : `${baseUrl}/api/gifs?sort=views&limit=${limit}`;
-
-            console.log(`[GifProvider] Fetching from Serika: ${endpoint}`);
-            const res = await fetch(endpoint, { headers });
-            const data = await res.json();
-            console.log(`[GifProvider] Serika response:`, data);
-            return transformSerikaToDiscord(data);
-        }
-
-        case "imgur": {
-            const clientId = settings.store.imgurClientId?.trim();
-            if (!clientId) throw new Error("Imgur Client ID required");
-
-            const endpoint = type === "search"
-                ? `https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`
-                : `https://api.imgur.com/3/gallery/hot/viral/0`;
-
-            const res = await fetch(endpoint, {
-                headers: { Authorization: `Client-ID ${clientId}` }
-            });
-            const data = await res.json();
-            return transformImgurToDiscord(data).slice(0, limit);
-        }
-
-        case "klipy": {
-            const apiKey = settings.store.klipyApiKey?.trim();
-            if (!apiKey) throw new Error("Klipy API key required");
-
-            const endpoint = type === "search"
-                ? `https://api.klipy.co/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`
-                : `https://api.klipy.co/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`;
-
-            const res = await fetch(endpoint);
-            const data = await res.json();
-            return transformKlipyToDiscord(data);
-        }
-
-        default:
-            throw new Error("Unknown provider");
+    } catch (err) {
+        console.error("[GifProvider] Search error:", err);
+        return [];
     }
 }
 
-// Store references for cleanup
-let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
-let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
+// Get trending GIFs from provider
+async function trendingFromProvider(limit: number = 50): Promise<DiscordGif[]> {
+    const provider = settings.store.provider;
+    if (provider === "tenor") return [];
+
+    try {
+        switch (provider) {
+            case "giphy": {
+                const apiKey = settings.store.giphyApiKey?.trim();
+                if (!apiKey) return [];
+                const res = await fetch(`https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`);
+                return transformGiphyToDiscord(await res.json());
+            }
+            case "serika": {
+                const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
+                const apiKey = settings.store.serikaApiKey?.trim();
+                const headers: Record<string, string> = {};
+                if (apiKey) headers["X-API-Key"] = apiKey;
+                const res = await fetch(`${baseUrl}/api/gifs?sort=views&limit=${limit}`, { headers });
+                return transformSerikaToDiscord(await res.json());
+            }
+            case "imgur": {
+                const clientId = settings.store.imgurClientId?.trim();
+                if (!clientId) return [];
+                const res = await fetch(`https://api.imgur.com/3/gallery/hot/viral/0`, {
+                    headers: { Authorization: `Client-ID ${clientId}` }
+                });
+                return transformImgurToDiscord(await res.json()).slice(0, limit);
+            }
+            case "klipy": {
+                const apiKey = settings.store.klipyApiKey?.trim();
+                if (!apiKey) return [];
+                const res = await fetch(`https://api.klipy.co/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`);
+                return transformKlipyToDiscord(await res.json());
+            }
+            default: return [];
+        }
+    } catch (err) {
+        console.error("[GifProvider] Trending error:", err);
+        return [];
+    }
+}
+
+// GIF Query Store - Lazy find the module that handles GIF queries
+const GifPickerQuery = mapMangledModuleLazy('"GIFPickerResultTypes"', {
+    search: m => typeof m === "function" && m.toString().includes("search"),
+    trending: m => typeof m === "function" && m.toString().includes("trending"),
+    getCategories: m => typeof m === "function"
+});
 
 export default definePlugin({
     name: "GifProvider",
@@ -187,99 +221,53 @@ export default definePlugin({
     authors: [Devs.Ven],
     settings,
 
-    start() {
-        console.log(`[GifProvider] Starting with provider: ${settings.store.provider}`);
-        
-        // Store originals
-        originalXHROpen = XMLHttpRequest.prototype.open;
-        originalXHRSend = XMLHttpRequest.prototype.send;
-        
-        const self = this;
-        
-        // Patch XMLHttpRequest.open to capture URL
-        XMLHttpRequest.prototype.open = function(method: string, url: string | URL, ...args: any[]) {
-            (this as any)._gifProviderUrl = url.toString();
-            (this as any)._gifProviderMethod = method;
-            return originalXHROpen!.apply(this, [method, url, ...args] as any);
-        };
-        
-        // Patch XMLHttpRequest.send to intercept GIF requests
-        XMLHttpRequest.prototype.send = function(body?: Document | XMLHttpRequestBodyInit | null) {
-            const url = (this as any)._gifProviderUrl || "";
-            
-            // Check if this is a Discord GIF API call
-            if (settings.store.provider !== "tenor" && 
-                /^https:\/\/(ptb\.|canary\.)?discord\.com\/api\/v\d+\/gifs\/(search|trending|suggest)/i.test(url)) {
-                
-                console.log(`[GifProvider] Intercepting XHR: ${url}`);
-                
-                const urlObj = new URL(url);
-                const isSearch = url.includes("/gifs/search");
-                const isTrending = url.includes("/gifs/trending");
-                const isSuggest = url.includes("/gifs/suggest");
-                
-                if (isSuggest) {
-                    // Return empty suggestions
-                    console.log("[GifProvider] Returning empty suggestions");
-                    setTimeout(() => {
-                        Object.defineProperty(this, "readyState", { value: 4, writable: true });
-                        Object.defineProperty(this, "status", { value: 200, writable: true });
-                        Object.defineProperty(this, "responseText", { value: "[]", writable: true });
-                        Object.defineProperty(this, "response", { value: [], writable: true });
-                        this.dispatchEvent(new Event("load"));
-                        this.dispatchEvent(new Event("loadend"));
-                    }, 0);
-                    return;
-                }
-                
-                const query = urlObj.searchParams.get("q") || "";
-                const limit = parseInt(urlObj.searchParams.get("limit") || "50");
-                const type = isSearch ? "search" : "trending";
-                
-                console.log(`[GifProvider] Fetching ${type} from ${settings.store.provider}, query="${query}"`);
-                
-                // Fetch from our provider
-                fetchFromProvider(query, limit, type)
-                    .then(gifs => {
-                        console.log(`[GifProvider] Got ${gifs.length} results`);
-                        const responseText = JSON.stringify(gifs);
-                        
-                        // Mock the XHR response
-                        Object.defineProperty(this, "readyState", { value: 4, writable: true });
-                        Object.defineProperty(this, "status", { value: 200, writable: true });
-                        Object.defineProperty(this, "responseText", { value: responseText, writable: true });
-                        Object.defineProperty(this, "response", { value: gifs, writable: true });
-                        
-                        this.dispatchEvent(new Event("readystatechange"));
-                        this.dispatchEvent(new Event("load"));
-                        this.dispatchEvent(new Event("loadend"));
-                    })
-                    .catch(err => {
-                        console.error("[GifProvider] Error fetching:", err);
-                        // On error, fall through to original
-                        return originalXHRSend!.call(this, body);
-                    });
-                
-                return;
+    flux: {
+        // Listen for GIF picker events
+        GIF_PICKER_QUERY({ query }: { query: string }) {
+            if (settings.store.provider !== "tenor" && query) {
+                console.log("[GifProvider] Intercepted GIF_PICKER_QUERY:", query);
+                this.doCustomSearch(query);
             }
+        }
+    },
+
+    async doCustomSearch(query: string) {
+        try {
+            const gifs = await searchFromProvider(query, 50);
+            console.log("[GifProvider] Got results:", gifs.length);
             
-            // Pass through to original for non-GIF requests
-            return originalXHRSend!.call(this, body);
-        };
+            if (gifs.length > 0) {
+                // Try to dispatch to update the GIF picker
+                FluxDispatcher.dispatch({
+                    type: "GIF_PICKER_QUERY",
+                    query,
+                    gifs
+                });
+            }
+        } catch (err) {
+            console.error("[GifProvider] Search failed:", err);
+        }
+    },
+
+    // Expose functions for console testing
+    searchGifs: searchFromProvider,
+    trendingGifs: trendingFromProvider,
+
+    start() {
+        console.log("[GifProvider] Started with provider:", settings.store.provider);
+        console.log("[GifProvider] GifPickerQuery module:", GifPickerQuery);
         
-        console.log("[GifProvider] XHR interceptor installed");
+        // Expose to window for debugging
+        (window as any).GifProvider = {
+            search: searchFromProvider,
+            trending: trendingFromProvider,
+            settings: settings.store
+        };
+        console.log("[GifProvider] Debug: Use window.GifProvider.search('cats') to test");
     },
 
     stop() {
-        // Restore original XHR methods
-        if (originalXHROpen) {
-            XMLHttpRequest.prototype.open = originalXHROpen;
-            originalXHROpen = null;
-        }
-        if (originalXHRSend) {
-            XMLHttpRequest.prototype.send = originalXHRSend;
-            originalXHRSend = null;
-        }
-        console.log("[GifProvider] Stopped, XHR restored");
+        console.log("[GifProvider] Stopped");
+        delete (window as any).GifProvider;
     }
 });
