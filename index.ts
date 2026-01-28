@@ -7,8 +7,7 @@
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { findByPropsLazy, findLazy, mapMangledModuleLazy } from "@webpack";
-import { FluxDispatcher } from "@webpack/common";
+import { RestAPI } from "@webpack/common";
 
 export const settings = definePluginSettings({
     provider: {
@@ -131,7 +130,10 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
         switch (provider) {
             case "giphy": {
                 const apiKey = settings.store.giphyApiKey?.trim();
-                if (!apiKey) return [];
+                if (!apiKey) {
+                    console.warn("[GifProvider] Giphy requires an API key");
+                    return [];
+                }
                 const res = await fetch(`https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`);
                 return transformGiphyToDiscord(await res.json());
             }
@@ -145,7 +147,10 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
             }
             case "imgur": {
                 const clientId = settings.store.imgurClientId?.trim();
-                if (!clientId) return [];
+                if (!clientId) {
+                    console.warn("[GifProvider] Imgur requires a Client ID");
+                    return [];
+                }
                 const res = await fetch(`https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`, {
                     headers: { Authorization: `Client-ID ${clientId}` }
                 });
@@ -153,7 +158,10 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
             }
             case "klipy": {
                 const apiKey = settings.store.klipyApiKey?.trim();
-                if (!apiKey) return [];
+                if (!apiKey) {
+                    console.warn("[GifProvider] Klipy requires an API key");
+                    return [];
+                }
                 const res = await fetch(`https://api.klipy.co/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`);
                 return transformKlipyToDiscord(await res.json());
             }
@@ -208,66 +216,91 @@ async function trendingFromProvider(limit: number = 50): Promise<DiscordGif[]> {
     }
 }
 
-// GIF Query Store - Lazy find the module that handles GIF queries
-const GifPickerQuery = mapMangledModuleLazy('"GIFPickerResultTypes"', {
-    search: m => typeof m === "function" && m.toString().includes("search"),
-    trending: m => typeof m === "function" && m.toString().includes("trending"),
-    getCategories: m => typeof m === "function"
-});
-
 export default definePlugin({
     name: "GifProvider",
     description: "Switch between different GIF providers (Tenor, Giphy, Klipy, Serika GIFs, Imgur)",
     authors: [Devs.Ven],
     settings,
 
-    flux: {
-        // Listen for GIF picker events
-        GIF_PICKER_QUERY({ query }: { query: string }) {
-            if (settings.store.provider !== "tenor" && query) {
-                console.log("[GifProvider] Intercepted GIF_PICKER_QUERY:", query);
-                this.doCustomSearch(query);
-            }
-        }
-    },
-
-    async doCustomSearch(query: string) {
-        try {
-            const gifs = await searchFromProvider(query, 50);
-            console.log("[GifProvider] Got results:", gifs.length);
-            
-            if (gifs.length > 0) {
-                // Try to dispatch to update the GIF picker
-                FluxDispatcher.dispatch({
-                    type: "GIF_PICKER_QUERY",
-                    query,
-                    gifs
-                });
-            }
-        } catch (err) {
-            console.error("[GifProvider] Search failed:", err);
-        }
-    },
-
     // Expose functions for console testing
     searchGifs: searchFromProvider,
     trendingGifs: trendingFromProvider,
 
+    originalGet: null as any,
+
     start() {
         console.log("[GifProvider] Started with provider:", settings.store.provider);
-        console.log("[GifProvider] GifPickerQuery module:", GifPickerQuery);
-        
+
+        // Store original RestAPI.get
+        this.originalGet = RestAPI.get.bind(RestAPI);
+
+        // Proxy RestAPI.get to intercept GIF requests
+        const self = this;
+        RestAPI.get = function(options: any) {
+            const url = options?.url || "";
+
+            // Check if this is a GIF search or trending request
+            if (settings.store.provider !== "tenor") {
+                if (url.includes("/gifs/search") || url.includes("gifs/search")) {
+                    const query = options?.query?.q || "";
+                    console.log("[GifProvider] Intercepted search:", query, url);
+                    return self.handleSearch(query);
+                }
+
+                if (url.includes("/gifs/trending") || url.includes("gifs/trending")) {
+                    console.log("[GifProvider] Intercepted trending:", url);
+                    return self.handleTrending();
+                }
+            }
+
+            // Fall through to original
+            return self.originalGet(options);
+        };
+
         // Expose to window for debugging
         (window as any).GifProvider = {
             search: searchFromProvider,
             trending: trendingFromProvider,
-            settings: settings.store
+            settings: settings.store,
+            plugin: this
         };
         console.log("[GifProvider] Debug: Use window.GifProvider.search('cats') to test");
     },
 
+    async handleSearch(query: string): Promise<any> {
+        try {
+            const gifs = await searchFromProvider(query, 50);
+            console.log("[GifProvider] Search results:", gifs.length);
+            if (gifs.length > 0) {
+                return { body: gifs };
+            }
+        } catch (err) {
+            console.error("[GifProvider] Search error:", err);
+        }
+        // Fall back to original
+        return this.originalGet({ url: "/gifs/search", query: { q: query } });
+    },
+
+    async handleTrending(): Promise<any> {
+        try {
+            const gifs = await trendingFromProvider(50);
+            console.log("[GifProvider] Trending results:", gifs.length);
+            if (gifs.length > 0) {
+                return { body: gifs };
+            }
+        } catch (err) {
+            console.error("[GifProvider] Trending error:", err);
+        }
+        // Fall back to original
+        return this.originalGet({ url: "/gifs/trending" });
+    },
+
     stop() {
         console.log("[GifProvider] Stopped");
+        // Restore original RestAPI.get
+        if (this.originalGet) {
+            RestAPI.get = this.originalGet;
+        }
         delete (window as any).GifProvider;
     }
 });
