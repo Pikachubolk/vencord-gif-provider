@@ -78,17 +78,17 @@ function transformGiphyToDiscord(data: any): DiscordGif[] {
 function transformSerikaToDiscord(data: any): DiscordGif[] {
     const gifs = data.gifs || data.data || [];
     return gifs.map((gif: any) => {
+        // gif.url is the actual .gif file URL (e.g. https://cdn.ado.wtf/gifs/.../xxx.gif)
         const gifUrl = gif.url || gif.originalUrl;
-        const slug = gif.slug || gif.id?.toString() || Math.random().toString(36);
         return {
-            id: gif.id?.toString() || slug,
+            id: gif.id?.toString() || gif.slug || Math.random().toString(36),
             title: gif.title || "",
-            url: `https://gifs.serika.dev/gif/${slug}`,
-            src: gifUrl,
-            gif_src: gifUrl,
+            url: gifUrl,      // URL to post in chat (the actual gif)
+            src: gifUrl,      // Video source (Discord can use gif here)
+            gif_src: gifUrl,  // GIF source
             width: gif.width || 200,
             height: gif.height || 200,
-            preview: gif.thumbnailUrl || gif.previewUrl || gifUrl
+            preview: gifUrl   // Preview image (use gif itself, Discord will handle it)
         };
     });
 }
