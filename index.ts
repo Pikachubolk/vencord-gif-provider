@@ -291,8 +291,8 @@ export default definePlugin({
             const gifs = await trendingFromProvider(50);
             console.log("[GifProvider] Trending results:", gifs.length);
             if (gifs.length > 0) {
-                // Return array directly for search results
-                return { body: gifs };
+                // Discord /gifs/trending expects { categories: [], gifs: [] }
+                return { body: { categories: [], gifs: gifs } };
             }
         } catch (err) {
             console.error("[GifProvider] Trending error:", err);
