@@ -77,16 +77,20 @@ function transformGiphyToDiscord(data: any): DiscordGif[] {
 // Transform Serika response to Discord GIF format
 function transformSerikaToDiscord(data: any): DiscordGif[] {
     const gifs = data.gifs || data.data || [];
-    return gifs.map((gif: any) => ({
-        id: gif.id?.toString() || gif.slug || Math.random().toString(36),
-        title: gif.title || "",
-        url: gif.url || gif.originalUrl,
-        src: gif.url || gif.originalUrl,
-        gif_src: gif.url || gif.originalUrl,
-        width: gif.width || 200,
-        height: gif.height || 200,
-        preview: gif.thumbnailUrl || gif.previewUrl || gif.url
-    }));
+    return gifs.map((gif: any) => {
+        const gifUrl = gif.url || gif.originalUrl;
+        const slug = gif.slug || gif.id?.toString() || Math.random().toString(36);
+        return {
+            id: gif.id?.toString() || slug,
+            title: gif.title || "",
+            url: `https://gifs.serika.dev/gif/${slug}`,
+            src: gifUrl,
+            gif_src: gifUrl,
+            width: gif.width || 200,
+            height: gif.height || 200,
+            preview: gif.thumbnailUrl || gif.previewUrl || gifUrl
+        };
+    });
 }
 
 // Transform Imgur response to Discord GIF format
@@ -272,7 +276,8 @@ export default definePlugin({
             const gifs = await searchFromProvider(query, 50);
             console.log("[GifProvider] Search results:", gifs.length);
             if (gifs.length > 0) {
-                return { body: gifs };
+                // Discord expects { categories: [], gifs: [] } format
+                return { body: { categories: [], gifs } };
             }
         } catch (err) {
             console.error("[GifProvider] Search error:", err);
@@ -286,7 +291,8 @@ export default definePlugin({
             const gifs = await trendingFromProvider(50);
             console.log("[GifProvider] Trending results:", gifs.length);
             if (gifs.length > 0) {
-                return { body: gifs };
+                // Discord expects { categories: [], gifs: [] } format
+                return { body: { categories: [], gifs } };
             }
         } catch (err) {
             console.error("[GifProvider] Trending error:", err);
