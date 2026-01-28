@@ -26,13 +26,13 @@
 
 ## 🎯 Supported Providers
 
-| Provider | Description | API Key Required |
-|----------|-------------|------------------|
-| **Tenor** | Discord's default provider | ❌ Built-in |
-| **Giphy** | World's largest GIF library | ❌ Public beta |
-| **Klipy** | Modern GIF platform | ❌ Optional |
-| **Serika GIFs** | Self-hosted GIF library | ❌ Optional |
-| **Imgur** | Popular image/GIF hosting | ❌ Built-in |
+| Provider | Description | API Key | Get Key |
+|----------|-------------|---------|---------|
+| **Tenor** | Discord's default provider | ❌ Not required | Built-in |
+| **Giphy** | World's largest GIF library | ✅ Required | [developers.giphy.com](https://developers.giphy.com) |
+| **Klipy** | Modern GIF platform | ✅ Required | [klipy.co/developers](https://klipy.co/developers) |
+| **Serika GIFs** | Self-hosted GIF library | ❌ Optional | Bypasses rate limits |
+| **Imgur** | Popular image/GIF hosting | ✅ Required | [api.imgur.com](https://api.imgur.com) |
 
 ## 📦 Installation
 
@@ -77,17 +77,38 @@ Open **Vencord Settings** → **Plugins** → **GifProvider**
 | Setting | Description | Default |
 |---------|-------------|---------|
 | **Provider** | Select your preferred GIF provider | Tenor |
+| **Giphy API Key** | Your Giphy API key | - |
+| **Klipy API Key** | Your Klipy API key | - |
+| **Imgur Client ID** | Your Imgur Client ID | - |
 | **Serika Instance** | URL of your Serika GIFs instance | `https://gifs.serika.dev` |
-| **Serika API Key** | API key for private instances | - |
+| **Serika API Key** | API key to bypass rate limits (optional) | - |
+
+### Getting API Keys
+
+#### Giphy
+1. Go to [developers.giphy.com](https://developers.giphy.com)
+2. Create an account and create an app
+3. Copy your API key
+
+#### Klipy
+1. Go to [klipy.co/developers](https://klipy.co/developers)
+2. Sign up and request an API key
+3. Copy your API key
+
+#### Imgur
+1. Go to [api.imgur.com](https://api.imgur.com/oauth2/addclient)
+2. Register an application (select "Anonymous usage without user authorization")
+3. Copy your Client ID
 
 ### Serika GIFs Setup
 
-[Serika GIFs](https://github.com/serika-dev/serika-gifs) is a self-hosted GIF platform. To use it:
+[Serika GIFs](https://github.com/serika-dev/serika-gifs) is a self-hosted GIF platform that works **without an API key**!
 
-1. Deploy your own instance or use the public one at `https://gifs.serika.dev`
-2. Select "Serika GIFs" as your provider
-3. Enter your instance URL (e.g., `https://gifs.yourdomain.com`)
-4. (Optional) Add your API key for private instances
+1. Select "Serika GIFs" as your provider
+2. Enter your instance URL (default: `https://gifs.serika.dev`)
+3. (Optional) Add an API key to bypass rate limits
+
+**Note:** Without an API key, you'll have rate limits. With an API key, unlimited access!
 
 ## 🎮 Usage
 
@@ -149,11 +170,11 @@ Vencord.Plugins.plugins.GifProvider.searchGifs("cats", 10)
 
 | Provider | Notes |
 |----------|-------|
-| **Tenor** | Uses Discord's built-in API key for seamless integration |
-| **Giphy** | Uses the public beta API key (`dc6zaTOxFJmzC`) |
-| **Klipy** | Public API, optional key for higher limits |
-| **Serika** | Fully configurable, supports authentication |
-| **Imgur** | Uses public Client-ID for gallery searches |
+| **Tenor** | Uses Discord's built-in API key - no setup needed |
+| **Giphy** | Requires your own API key from developers.giphy.com |
+| **Klipy** | Requires your own API key from klipy.co |
+| **Serika** | Works without API key! Optional key bypasses rate limits |
+| **Imgur** | Requires your own Client ID from api.imgur.com |
 
 ## 🐛 Known Issues
 

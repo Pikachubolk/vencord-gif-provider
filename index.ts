@@ -14,27 +14,45 @@ export const settings = definePluginSettings({
         description: "Choose your preferred GIF provider",
         options: [
             { label: "Tenor (Default)", value: "tenor", default: true },
-            { label: "Giphy", value: "giphy" },
-            { label: "Klipy", value: "klipy" },
+            { label: "Giphy (API key required)", value: "giphy" },
+            { label: "Klipy (API key required)", value: "klipy" },
             { label: "Serika GIFs", value: "serika" },
-            { label: "Imgur", value: "imgur" },
+            { label: "Imgur (API key required)", value: "imgur" },
         ],
     },
+    // Giphy settings
+    giphyApiKey: {
+        type: OptionType.STRING,
+        description: "Giphy API key (get one at developers.giphy.com)",
+        default: "",
+    },
+    // Klipy settings
+    klipyApiKey: {
+        type: OptionType.STRING,
+        description: "Klipy API key (get one at klipy.co/developers)",
+        default: "",
+    },
+    // Imgur settings
+    imgurClientId: {
+        type: OptionType.STRING,
+        description: "Imgur Client ID (get one at api.imgur.com)",
+        default: "",
+    },
+    // Serika settings
     serikaInstance: {
         type: OptionType.STRING,
-        description: "Serika GIFs instance URL (only used when Serika is selected)",
+        description: "Serika GIFs instance URL",
         default: "https://gifs.serika.dev",
     },
     serikaApiKey: {
         type: OptionType.STRING,
-        description: "Serika GIFs API key (optional, for private instances)",
+        description: "Serika GIFs API key (optional, bypasses rate limits)",
         default: "",
     },
 });
 
 // Provider configurations
 const TENOR_API_KEY = "AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCYQ"; // Discord's public key
-const GIPHY_API_KEY = "dc6zaTOxFJmzC"; // Public beta key
 
 interface GifResult {
     id: string;
@@ -44,6 +62,33 @@ interface GifResult {
     preview: string;
     width: number;
     height: number;
+}
+
+// Helper to check if API key is configured
+function hasApiKey(provider: string): boolean {
+    switch (provider) {
+        case "giphy":
+            return !!settings.store.giphyApiKey?.trim();
+        case "klipy":
+            return !!settings.store.klipyApiKey?.trim();
+        case "imgur":
+            return !!settings.store.imgurClientId?.trim();
+        default:
+            return true; // Tenor and Serika don't require API keys
+    }
+}
+
+function getMissingKeyMessage(provider: string): string {
+    switch (provider) {
+        case "giphy":
+            return "Giphy requires an API key. Get one at developers.giphy.com and add it in plugin settings.";
+        case "klipy":
+            return "Klipy requires an API key. Get one at klipy.co/developers and add it in plugin settings.";
+        case "imgur":
+            return "Imgur requires a Client ID. Get one at api.imgur.com and add it in plugin settings.";
+        default:
+            return "API key required";
+    }
 }
 
 // Transform functions for each provider
@@ -121,14 +166,22 @@ async function searchTenor(query: string, limit: number): Promise<GifResult[]> {
 }
 
 async function searchGiphy(query: string, limit: number): Promise<GifResult[]> {
-    const url = `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${GIPHY_API_KEY}`;
+    const apiKey = settings.store.giphyApiKey?.trim();
+    if (!apiKey) {
+        throw new Error(getMissingKeyMessage("giphy"));
+    }
+    const url = `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     return transformGiphyResults(data);
 }
 
 async function searchKlipy(query: string, limit: number): Promise<GifResult[]> {
-    const url = `https://api.klipy.co/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}`;
+    const apiKey = settings.store.klipyApiKey?.trim();
+    if (!apiKey) {
+        throw new Error(getMissingKeyMessage("klipy"));
+    }
+    const url = `https://api.klipy.co/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     return transformKlipyResults(data);
@@ -136,7 +189,7 @@ async function searchKlipy(query: string, limit: number): Promise<GifResult[]> {
 
 async function searchSerika(query: string, limit: number): Promise<GifResult[]> {
     const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
-    const apiKey = settings.store.serikaApiKey;
+    const apiKey = settings.store.serikaApiKey?.trim();
     
     const headers: Record<string, string> = {};
     if (apiKey) {
@@ -150,10 +203,14 @@ async function searchSerika(query: string, limit: number): Promise<GifResult[]> 
 }
 
 async function searchImgur(query: string, limit: number): Promise<GifResult[]> {
+    const clientId = settings.store.imgurClientId?.trim();
+    if (!clientId) {
+        throw new Error(getMissingKeyMessage("imgur"));
+    }
     const url = `https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`;
     const res = await fetch(url, {
         headers: {
-            Authorization: "Client-ID 546c25a59c58ad7",
+            Authorization: `Client-ID ${clientId}`,
         },
     });
     const data = await res.json();
@@ -169,14 +226,22 @@ async function trendingTenor(limit: number): Promise<GifResult[]> {
 }
 
 async function trendingGiphy(limit: number): Promise<GifResult[]> {
-    const url = `https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${GIPHY_API_KEY}`;
+    const apiKey = settings.store.giphyApiKey?.trim();
+    if (!apiKey) {
+        throw new Error(getMissingKeyMessage("giphy"));
+    }
+    const url = `https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     return transformGiphyResults(data);
 }
 
 async function trendingKlipy(limit: number): Promise<GifResult[]> {
-    const url = `https://api.klipy.co/v1/gifs/trending?limit=${limit}`;
+    const apiKey = settings.store.klipyApiKey?.trim();
+    if (!apiKey) {
+        throw new Error(getMissingKeyMessage("klipy"));
+    }
+    const url = `https://api.klipy.co/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     return transformKlipyResults(data);
@@ -184,7 +249,7 @@ async function trendingKlipy(limit: number): Promise<GifResult[]> {
 
 async function trendingSerika(limit: number): Promise<GifResult[]> {
     const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
-    const apiKey = settings.store.serikaApiKey;
+    const apiKey = settings.store.serikaApiKey?.trim();
     
     const headers: Record<string, string> = {};
     if (apiKey) {
@@ -198,10 +263,14 @@ async function trendingSerika(limit: number): Promise<GifResult[]> {
 }
 
 async function trendingImgur(limit: number): Promise<GifResult[]> {
+    const clientId = settings.store.imgurClientId?.trim();
+    if (!clientId) {
+        throw new Error(getMissingKeyMessage("imgur"));
+    }
     const url = `https://api.imgur.com/3/gallery/hot/viral/0?showViral=true&album_previews=true`;
     const res = await fetch(url, {
         headers: {
-            Authorization: "Client-ID 546c25a59c58ad7",
+            Authorization: `Client-ID ${clientId}`,
         },
     });
     const data = await res.json();
@@ -211,6 +280,12 @@ async function trendingImgur(limit: number): Promise<GifResult[]> {
 // Main search dispatcher
 async function searchGifs(query: string, limit = 30): Promise<GifResult[]> {
     const provider = settings.store.provider;
+    
+    // Check if API key is required and missing
+    if (!hasApiKey(provider)) {
+        console.error(`[GifProvider] ${getMissingKeyMessage(provider)}`);
+        return [];
+    }
     
     try {
         switch (provider) {
@@ -235,6 +310,12 @@ async function searchGifs(query: string, limit = 30): Promise<GifResult[]> {
 // Main trending dispatcher
 async function getTrendingGifs(limit = 30): Promise<GifResult[]> {
     const provider = settings.store.provider;
+    
+    // Check if API key is required and missing
+    if (!hasApiKey(provider)) {
+        console.error(`[GifProvider] ${getMissingKeyMessage(provider)}`);
+        return [];
+    }
     
     try {
         switch (provider) {
