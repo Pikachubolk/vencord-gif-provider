@@ -240,7 +240,11 @@ export const settings = definePluginSettings({
             { label: "Imgur (Client ID required)", value: "imgur" },
         ],
         onChange(newValue: string) {
-            handleProviderChange(newValue);
+            // Read current search query from the GIF picker input if present
+            const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
+            const input = gifPicker?.querySelector('input');
+            const currentQuery = input?.value?.trim() || "";
+            handleProviderChange(newValue, currentQuery || undefined);
         }
     },
     giphyApiKey: {
@@ -952,14 +956,8 @@ function injectDropdown(container: Element) {
 
     select.addEventListener("change", () => {
         const newValue = select.value;
+        // Setting this triggers the settings onChange handler which calls handleProviderChange
         settings.store.provider = newValue;
-
-        // Check if there's an active search query to re-run on the new provider
-        const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
-        const input = gifPicker?.querySelector('input');
-        const currentQuery = input?.value?.trim() || "";
-
-        handleProviderChange(newValue, currentQuery || undefined);
     });
 
     wrapper.appendChild(select);
