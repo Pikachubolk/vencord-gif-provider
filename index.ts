@@ -152,6 +152,8 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
         console.error("[GifProvider] Error clearing GIF picker store:", e);
     }
 
+    console.log(`[GifProvider] handleProviderChange: ${newValue}, hasActiveSearch=${hasActiveSearch}, query="${currentQuery || ""}"`);
+
     if (hasActiveSearch) {
         // Active search: re-search on new provider, also fetch categories/trending in background
         const searchPromise = searchFromProvider(currentQuery!, 50);
@@ -240,11 +242,9 @@ export const settings = definePluginSettings({
             { label: "Imgur (Client ID required)", value: "imgur" },
         ],
         onChange(newValue: string) {
-            // Read current search query from the GIF picker input if present
-            const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
-            const input = gifPicker?.querySelector('input');
-            const currentQuery = input?.value?.trim() || "";
-            handleProviderChange(newValue, currentQuery || undefined);
+            // Provider change is handled directly by the dropdown event listener.
+            // This callback just ensures the setting is persisted.
+            console.log(`[GifProvider] Settings persisted provider: ${newValue}`);
         }
     },
     giphyApiKey: {
@@ -956,8 +956,20 @@ function injectDropdown(container: Element) {
 
     select.addEventListener("change", () => {
         const newValue = select.value;
-        // Setting this triggers the settings onChange handler which calls handleProviderChange
+        const currentProvider = settings.store.provider;
+        if (newValue === currentProvider) return;
+
+        console.log(`[GifProvider] Dropdown selected: ${newValue}`);
+
+        // Try to persist the setting (onChange may or may not fire for direct assignment)
         settings.store.provider = newValue;
+
+        // Read current search query and trigger provider change immediately
+        const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
+        const input = gifPicker?.querySelector('input');
+        const currentQuery = input?.value?.trim() || "";
+        console.log(`[GifProvider] Provider change: ${currentProvider} -> ${newValue}, query: "${currentQuery}"`);
+        handleProviderChange(newValue, currentQuery || undefined);
     });
 
     wrapper.appendChild(select);
