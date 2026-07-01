@@ -433,6 +433,8 @@ To get this plugin into the official Vencord repository:
    - Add yourself to `src/utils/constants.ts` Devs object
    - Submit a PR with a good description
 
+The official submission PR is **[Vendicated/Vencord#4362](https://github.com/Vendicated/Vencord/pull/4362)**.
+
 ---
 
 ## 📄 License
