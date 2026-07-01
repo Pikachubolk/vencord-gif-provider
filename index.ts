@@ -906,7 +906,32 @@ function injectDropdown(container: Element) {
     select.addEventListener("change", () => {
         const newValue = select.value;
         settings.store.provider = newValue;
+
+        // Check if there's an active search query to re-run on the new provider
+        const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
+        const input = gifPicker?.querySelector('input');
+        const currentQuery = input?.value?.trim() || "";
+
         handleProviderChange(newValue);
+
+        if (currentQuery) {
+            // Re-search with the same query on the new provider after caches are cleared
+            searchFromProvider(currentQuery, 50).then(gifs => {
+                if (FluxDispatcher) {
+                    FluxDispatcher.dispatch({
+                        type: "GIF_PICKER_SEARCH_SUCCESS",
+                        query: currentQuery,
+                        gifs
+                    });
+                }
+                const store = getGifPickerSearchStore();
+                if (store) {
+                    try { store.emitChange(); } catch (e) {}
+                }
+            }).catch(err => {
+                console.error("[GifProvider] Provider switch re-search error:", err);
+            });
+        }
     });
 
     wrapper.appendChild(select);
