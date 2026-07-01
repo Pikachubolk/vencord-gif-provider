@@ -197,7 +197,9 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
             cachedProvider = newValue;
             setStoreState(store, categories, gifs);
 
-            // Trigger Discord's native search for the current query
+            // Trigger Discord's native search for the current query.
+            // We clear the input and re-set it to the same query to force Discord's
+            // search handler to fire (it may ignore input events when the value didn't change).
             const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
             const input = gifPicker?.querySelector('input');
             if (input) {
@@ -205,9 +207,15 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
                     window.HTMLInputElement.prototype, 'value'
                 )?.set;
                 if (nativeInputValueSetter) {
-                    nativeInputValueSetter.call(input, currentQuery!);
+                    // Clear input to reset the search state
+                    nativeInputValueSetter.call(input, "");
                     input.dispatchEvent(new Event('input', { bubbles: true }));
-                    console.log("[GifProvider] Triggered native search for query:", currentQuery!);
+                    // Small delay to let Discord process the empty search
+                    setTimeout(() => {
+                        nativeInputValueSetter.call(input, currentQuery!);
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        console.log("[GifProvider] Re-applied search query after provider switch:", currentQuery!);
+                    }, 50);
                 }
             } else {
                 // Fallback: manually dispatch if input not found
