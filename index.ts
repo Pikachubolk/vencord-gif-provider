@@ -32,12 +32,29 @@ export const settings = definePluginSettings({
             try {
                 if (FluxDispatcher) {
                     FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
-                    FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", gifs: [] });
+                    FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", gifs: [], categories: [] });
                     FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
+                    FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
                 }
             } catch (e) {
                 console.error("[GifProvider] Error clearing GIF picker store:", e);
             }
+
+            // Asynchronously fetch and dispatch new provider's contents
+            Promise.all([
+                fetchCategories(newValue),
+                trendingFromProvider(50, newValue)
+            ]).then(([categories, gifs]) => {
+                if (FluxDispatcher) {
+                    FluxDispatcher.dispatch({
+                        type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
+                        gifs: gifs,
+                        categories: categories
+                    });
+                }
+            }).catch(err => {
+                console.error("[GifProvider] Error updating store on provider change:", err);
+            });
         }
     },
     giphyApiKey: {
@@ -451,21 +468,38 @@ async function fetchGiphyCategories(): Promise<DiscordCategory[]> {
     return categories;
 }
 
-async function fetchCategories(): Promise<DiscordCategory[]> {
-    const provider = settings.store.provider;
-    if (cachedProvider !== provider) {
-        categoriesCache = null;
-        categoriesCacheTime = 0;
-        cachedProvider = provider;
+async function fetchCategories(providerOverride?: string): Promise<DiscordCategory[]> {
+    const provider = providerOverride || settings.store.provider;
+    const useCache = !providerOverride;
+    
+    if (useCache && categoriesCache && Date.now() - categoriesCacheTime < CACHE_DURATION && cachedProvider === provider) {
+        return categoriesCache;
     }
+    
     try {
+        let categories: DiscordCategory[] = [];
         switch (provider) {
-            case "tenor_web": return await fetchTenorWebCategories();
-            case "serika": return await fetchSerikaCategories();
-            case "klipy": return await fetchKlipyCategories();
-            case "giphy": return await fetchGiphyCategories();
-            default: return [];
+            case "tenor_web":
+                categories = await fetchTenorWebCategories();
+                break;
+            case "serika":
+                categories = await fetchSerikaCategories();
+                break;
+            case "klipy":
+                categories = await fetchKlipyCategories();
+                break;
+            case "giphy":
+                categories = await fetchGiphyCategories();
+                break;
+            default:
+                categories = [];
         }
+        if (useCache) {
+            categoriesCache = categories;
+            categoriesCacheTime = Date.now();
+            cachedProvider = provider;
+        }
+        return categories;
     } catch (err) {
         console.error("[GifProvider] Categories error:", err);
         return [];
@@ -540,8 +574,8 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
     }
 }
 
-async function trendingFromProvider(limit: number = 50): Promise<DiscordGif[]> {
-    const provider = settings.store.provider;
+async function trendingFromProvider(limit: number = 50, providerOverride?: string): Promise<DiscordGif[]> {
+    const provider = providerOverride || settings.store.provider;
 
     try {
         switch (provider) {
