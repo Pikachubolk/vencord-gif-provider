@@ -73,11 +73,26 @@ interface DiscordCategory {
 // Cache for categories
 let categoriesCache: DiscordCategory[] | null = null;
 let categoriesCacheTime = 0;
+let cachedProvider: string | null = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Safe fetch wrapper — never throws, returns null on failure
 async function safeFetch(url: string, options?: RequestInit): Promise<any | null> {
     try {
+        const native = (window as any).VencordNative;
+        if (native && native.csp) {
+            try {
+                const parsedUrl = new URL(url);
+                const origin = parsedUrl.origin;
+                const allowed = await native.csp.isDomainAllowed(origin, ["connect-src"]);
+                if (!allowed) {
+                    console.log(`[GifProvider] Requesting CSP override for: ${origin}`);
+                    await native.csp.requestAddOverride(origin, ["connect-src"], "GifProvider");
+                }
+            } catch (cspErr) {
+                console.error("[GifProvider] CSP override request failed:", cspErr);
+            }
+        }
         const res = await fetch(url, options);
         if (!res.ok) {
             console.warn(`[GifProvider] Fetch failed (${res.status}): ${url.substring(0, 100)}`);
@@ -326,6 +341,11 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
 
 async function fetchCategories(): Promise<DiscordCategory[]> {
     const provider = settings.store.provider;
+    if (cachedProvider !== provider) {
+        categoriesCache = null;
+        categoriesCacheTime = 0;
+        cachedProvider = provider;
+    }
     try {
         switch (provider) {
             case "tenor_web": return await fetchTenorWebCategories();
@@ -463,12 +483,98 @@ async function trendingFromProvider(limit: number = 50): Promise<DiscordGif[]> {
     }
 }
 
+// ─── Placeholder Management ──────────────────────────────────────────────────
+
+let observer: MutationObserver | null = null;
+let localizedSearchVerb = "";
+
+function getSearchPlaceholder(provider: string): string {
+    const providerNames: Record<string, string> = {
+        tenor_web: "Tenor",
+        giphy: "GIPHY",
+        klipy: "Klipy",
+        serika: "Serika GIFs",
+        imgur: "Imgur"
+    };
+    const name = providerNames[provider] || "GIFs";
+    
+    // Default fallback
+    const verb = localizedSearchVerb || "Search";
+    return `${verb} ${name}`;
+}
+
+function patchPlaceholder() {
+    const provider = settings.store.provider;
+    const targetPlaceholder = getSearchPlaceholder(provider);
+
+    // Find all search inputs in the expression picker / GIF picker
+    const inputs = document.querySelectorAll<HTMLInputElement>(
+        '#gif-picker-tab-panel input[placeholder], [class*="expressionPicker"] input[placeholder], [class*="searchBar"] input[placeholder], input[class*="searchBar"]'
+    );
+    
+    for (const input of inputs) {
+        const isGifSearch = input.closest('#gif-picker-tab-panel') ||
+                            (input.closest('[class*="expressionPicker"]') && 
+                             (document.querySelector('[class*="gifPicker"]') || 
+                              input.placeholder.toLowerCase().includes("gif") || 
+                              input.placeholder.toLowerCase().includes("tenor") || 
+                              input.placeholder.toLowerCase().includes("giphy") ||
+                              input.placeholder.toLowerCase().includes("klipy") ||
+                              input.placeholder.toLowerCase().includes("serika") ||
+                              input.placeholder.toLowerCase().includes("imgur")));
+        
+        if (isGifSearch) {
+            // Keep track of the localized verb from the initial placeholder if we haven't already
+            if (!localizedSearchVerb) {
+                const currentPlaceholder = input.placeholder;
+                if (currentPlaceholder && !currentPlaceholder.startsWith("Search ")) {
+                    const words = currentPlaceholder.trim().split(/\s+/);
+                    if (words.length > 1) {
+                        // Assuming the first word is the verb (e.g. "Rechercher", "Buscar")
+                        localizedSearchVerb = words[0];
+                    }
+                }
+            }
+
+            if (input.placeholder !== targetPlaceholder) {
+                input.placeholder = targetPlaceholder;
+                input.setAttribute("placeholder", targetPlaceholder);
+                input.setAttribute("aria-label", targetPlaceholder);
+            }
+        }
+    }
+}
+
+function startPlaceholderObserver() {
+    if (observer) observer.disconnect();
+    
+    observer = new MutationObserver(() => {
+        patchPlaceholder();
+    });
+    
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+    
+    // Run once immediately
+    patchPlaceholder();
+}
+
+function stopPlaceholderObserver() {
+    if (observer) {
+        observer.disconnect();
+        observer = null;
+    }
+    localizedSearchVerb = "";
+}
+
 // ─── Plugin definition ──────────────────────────────────────────────────────
 
 export default definePlugin({
     name: "GifProvider",
     description: "Switch between different GIF providers (Tenor Web, Giphy, Klipy, Serika GIFs, Imgur)",
-    authors: [Devs.Ven],
+    authors: [Devs.Serika],
     settings,
 
     // Expose functions for console testing
@@ -526,6 +632,9 @@ export default definePlugin({
             return self.originalGet(options);
         };
 
+        // Start watching for search input to patch its placeholder
+        startPlaceholderObserver();
+
         // Expose to window for debugging
         (window as any).GifProvider = {
             search: searchFromProvider,
@@ -580,6 +689,10 @@ export default definePlugin({
         if (this.originalGet) {
             RestAPI.get = this.originalGet;
         }
+        
+        // Stop placeholder observer
+        stopPlaceholderObserver();
+
         // Clear cache on stop
         categoriesCache = null;
         categoriesCacheTime = 0;
