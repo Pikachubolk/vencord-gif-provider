@@ -117,15 +117,17 @@ function transformTenorWebToDiscord(data: any): DiscordGif[] {
 
     return data.results.map((item: any) => {
         const formats = item.media_formats || {};
+        const webmFormat = formats.webm || formats.tinywebm || {};
+        const tinyWebmFormat = formats.tinywebm || formats.nanowebm || webmFormat;
         const gifFormat = formats.gif || formats.mediumgif || formats.tinygif || {};
-        const previewFormat = formats.tinygif || formats.nanogif || gifFormat;
-        const dims = gifFormat.dims || [200, 200];
+        const previewFormat = tinyWebmFormat.url ? tinyWebmFormat : (formats.tinygif || formats.nanogif || gifFormat);
+        const dims = webmFormat.dims || gifFormat.dims || [200, 200];
 
         return {
             id: item.id || Math.random().toString(36).slice(2),
             title: item.title || item.content_description || "",
-            url: gifFormat.url || "",
-            src: gifFormat.url || "",
+            url: item.itemurl || item.url || gifFormat.url || "",
+            src: webmFormat.url || gifFormat.url || "",
             gif_src: gifFormat.url || "",
             width: dims[0] || 200,
             height: dims[1] || 200,
