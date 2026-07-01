@@ -35,6 +35,8 @@ let categoriesCacheTime = 0;
 let trendingGifsCache: DiscordGif[] | null = null;
 let trendingGifsCacheTime = 0;
 let searchResultsCache: Map<string, DiscordGif[]> = new Map();
+let currentSearchQuery: string = "";
+let currentSearchResults: DiscordGif[] = [];
 let cachedProvider: string | null = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
@@ -125,6 +127,8 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
     trendingGifsCache = null;
     trendingGifsCacheTime = 0;
     searchResultsCache.clear();
+    currentSearchQuery = "";
+    currentSearchResults = [];
     cachedProvider = null;
 
     const store = getGifPickerSearchStore();
@@ -158,6 +162,8 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
 
         // Search results take priority — dispatch them as soon as ready
         searchPromise.then(gifs => {
+            currentSearchQuery = currentQuery!;
+            currentSearchResults = gifs;
             if (FluxDispatcher) {
                 FluxDispatcher.dispatch({
                     type: "GIF_PICKER_SEARCH_SUCCESS",
@@ -1097,6 +1103,8 @@ function setupCategoryClickListener() {
 
         // Directly search and dispatch results to force the view to switch
         searchFromProvider(categoryName, 50).then(gifs => {
+            currentSearchQuery = categoryName;
+            currentSearchResults = gifs;
             if (FluxDispatcher) {
                 FluxDispatcher.dispatch({
                     type: "GIF_PICKER_SEARCH_SUCCESS",
@@ -1143,13 +1151,16 @@ function ensureStorePatched() {
 
         // Patch search result getters if they exist
         if (typeof store.originalGetSearchResults === "function") {
-            store.getSearchResults = () => Array.from(searchResultsCache.values()).flat();
+            store.getSearchResults = () => currentSearchResults;
         }
         if (typeof store.originalGetSearchQuery === "function") {
-            store.getSearchQuery = () => "";
+            store.getSearchQuery = () => currentSearchQuery;
         }
         if (typeof store.originalGetSearchResultsByQuery === "function") {
-            store.getSearchResultsByQuery = (query: string) => searchResultsCache.get(query) || [];
+            store.getSearchResultsByQuery = (query: string) => {
+                const key = `${settings.store.provider}:${query.toLowerCase().trim()}`;
+                return searchResultsCache.get(key) || [];
+            };
         }
 
         // Also patch getState to inject our data into the returned state
@@ -1159,9 +1170,11 @@ function ensureStorePatched() {
                 return {
                     ...state,
                     categories: categoriesCache || state?.categories || [],
-                    gifs: trendingGifsCache || state?.gifs || [],
+                    gifs: currentSearchQuery ? currentSearchResults : (trendingGifsCache || state?.gifs || []),
                     trendingGifs: trendingGifsCache || state?.trendingGifs || [],
                     trendingCategories: categoriesCache || state?.trendingCategories || [],
+                    searchQuery: currentSearchQuery,
+                    searchResults: currentSearchResults,
                 };
             };
         }
@@ -1191,6 +1204,8 @@ export default definePlugin({
         trendingGifsCache = null;
         trendingGifsCacheTime = 0;
         searchResultsCache.clear();
+        currentSearchQuery = "";
+        currentSearchResults = [];
 
         console.log("[GifProvider] Started with provider:", settings.store.provider);
 
@@ -1276,6 +1291,8 @@ export default definePlugin({
     async handleSearch(query: string): Promise<any> {
         try {
             const gifs = await searchFromProvider(query, 50);
+            currentSearchQuery = query;
+            currentSearchResults = gifs;
             console.log("[GifProvider] Search results:", gifs.length);
             return { body: gifs, status: 200, ok: true, headers: {} };
         } catch (err) {
@@ -1373,6 +1390,8 @@ export default definePlugin({
         trendingGifsCache = null;
         trendingGifsCacheTime = 0;
         searchResultsCache.clear();
+        currentSearchQuery = "";
+        currentSearchResults = [];
         delete (window as any).GifProvider;
     },
 });
