@@ -88,7 +88,7 @@ function getGifPickerSearchStore() {
     return null;
 }
 
-function setStoreState(store: any, categories: any[], gifs: any[]) {
+function setStoreState(store: any, categories: any[], gifs: any[], query?: string, searchResults?: any[]) {
     if (!store) return;
     try {
         // Try to set internal _state
@@ -100,6 +100,11 @@ function setStoreState(store: any, categories: any[], gifs: any[]) {
                 trendingGifs: gifs,
                 trendingCategories: categories,
             };
+            if (query !== undefined && store._state) {
+                store._state.searchQuery = query;
+                store._state.searchResults = searchResults ?? [];
+                store._state.searchResultIds = (searchResults ?? []).map((g: any) => g?.id).filter(Boolean);
+            }
         }
         // Try to mutate getState() return value
         if (typeof store.getState === "function") {
@@ -109,6 +114,11 @@ function setStoreState(store: any, categories: any[], gifs: any[]) {
                 if (Array.isArray(state.gifs)) state.gifs = gifs;
                 if (Array.isArray(state.trendingGifs)) state.trendingGifs = gifs;
                 if (Array.isArray(state.trendingCategories)) state.trendingCategories = categories;
+                if (query !== undefined) {
+                    state.searchQuery = query;
+                    state.searchResults = searchResults ?? [];
+                    state.searchResultIds = (searchResults ?? []).map((g: any) => g?.id).filter(Boolean);
+                }
             }
         }
         // Also set direct properties as fallback
@@ -116,6 +126,11 @@ function setStoreState(store: any, categories: any[], gifs: any[]) {
         store.gifs = gifs;
         store.trendingGifs = gifs;
         store.trendingCategories = categories;
+        if (query !== undefined) {
+            store.searchQuery = query;
+            store.searchResults = searchResults ?? [];
+            store.searchResultIds = (searchResults ?? []).map((g: any) => g?.id).filter(Boolean);
+        }
     } catch (e) {
         console.error("[GifProvider] Error setting store state:", e);
     }
@@ -135,18 +150,28 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
     const hasActiveSearch = !!(currentQuery && currentQuery.trim());
 
     // Clear store state immediately so old content disappears
-    setStoreState(store, [], []);
+    if (hasActiveSearch) {
+        // Stay in search mode: keep query, clear results so user sees fresh provider results
+        setStoreState(store, [], [], currentQuery!, []);
+        currentSearchQuery = currentQuery!;
+        currentSearchResults = [];
+    } else {
+        setStoreState(store, [], []);
+    }
     if (store) {
         try { store.emitChange(); } catch (e) {}
     }
 
     try {
         if (FluxDispatcher) {
-            FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
-            if (!hasActiveSearch) {
+            if (hasActiveSearch) {
+                // Don't reset the view — just re-trigger the search with the new provider
+                console.log("[GifProvider] Active search mode: skipping view reset, will re-trigger search");
+            } else {
+                FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
                 FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
+                FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
             }
-            FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
         }
     } catch (e) {
         console.error("[GifProvider] Error clearing GIF picker store:", e);
@@ -155,32 +180,15 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
     console.log(`[GifProvider] handleProviderChange: ${newValue}, hasActiveSearch=${hasActiveSearch}, query="${currentQuery || ""}"`);
 
     if (hasActiveSearch) {
-        // Active search: re-search on new provider, also fetch categories/trending in background
-        const searchPromise = searchFromProvider(currentQuery!, 50);
+        // Active search: re-search on new provider by triggering Discord's native search flow.
+        // We set the input value and dispatch an input event, which makes Discord call RestAPI.get,
+        // and our RestAPI.get interceptor returns the results from the new provider.
         const fetchPromise = Promise.all([
             fetchCategories(newValue),
             trendingFromProvider(50, newValue)
         ]);
 
-        // Search results take priority — dispatch them as soon as ready
-        searchPromise.then(gifs => {
-            currentSearchQuery = currentQuery!;
-            currentSearchResults = gifs;
-            if (FluxDispatcher) {
-                FluxDispatcher.dispatch({
-                    type: "GIF_PICKER_SEARCH_SUCCESS",
-                    query: currentQuery!,
-                    gifs
-                });
-            }
-            if (store) {
-                try { store.emitChange(); } catch (e) {}
-            }
-        }).catch(err => {
-            console.error("[GifProvider] Provider switch re-search error:", err);
-        });
-
-        // Categories/trending fetched in background for when user goes back
+        // Wait for background fetch to populate caches before triggering the search
         fetchPromise.then(([categories, gifs]) => {
             categoriesCache = categories;
             categoriesCacheTime = Date.now();
@@ -188,6 +196,37 @@ function handleProviderChange(newValue: string, currentQuery?: string) {
             trendingGifsCacheTime = Date.now();
             cachedProvider = newValue;
             setStoreState(store, categories, gifs);
+
+            // Trigger Discord's native search for the current query
+            const gifPicker = document.querySelector('#gif-picker-tab-panel') || document.querySelector('[class*="expressionPicker"]');
+            const input = gifPicker?.querySelector('input');
+            if (input) {
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                )?.set;
+                if (nativeInputValueSetter) {
+                    nativeInputValueSetter.call(input, currentQuery!);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    console.log("[GifProvider] Triggered native search for query:", currentQuery!);
+                }
+            } else {
+                // Fallback: manually dispatch if input not found
+                searchFromProvider(currentQuery!, 50).then(searchGifs => {
+                    currentSearchQuery = currentQuery!;
+                    currentSearchResults = searchGifs;
+                    if (FluxDispatcher) {
+                        FluxDispatcher.dispatch({
+                            type: "GIF_PICKER_SEARCH_SUCCESS",
+                            query: currentQuery!,
+                            gifs: searchGifs
+                        });
+                    }
+                    if (store) {
+                        try { store.emitChange(); } catch (e) {}
+                    }
+                });
+            }
+
             patchPlaceholder();
         }).catch(err => {
             console.error("[GifProvider] Error updating cache on provider change:", err);
