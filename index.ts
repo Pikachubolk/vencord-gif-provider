@@ -7,7 +7,159 @@
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { RestAPI, FluxDispatcher } from "@webpack/common";
+import { findStore } from "@webpack";
+import { RestAPI, FluxDispatcher, Flux } from "@webpack/common";
+
+// Discord GIF format interface
+interface DiscordGif {
+    id: string;
+    title: string;
+    url: string;
+    src: string;
+    gif_src: string;
+    width: number;
+    height: number;
+    preview: string;
+}
+
+interface DiscordCategory {
+    name: string;
+    src: string;
+}
+
+// Cache for categories and trending gifs
+let categoriesCache: DiscordCategory[] | null = null;
+let categoriesCacheTime = 0;
+let trendingGifsCache: DiscordGif[] | null = null;
+let trendingGifsCacheTime = 0;
+let cachedProvider: string | null = null;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+function getGifPickerSearchStore() {
+    try {
+        let store = findStore("GIFPickerSearchStore") as any;
+        if (store) return store;
+    } catch {}
+    try {
+        let store = findStore("GifPickerSearchStore") as any;
+        if (store) return store;
+    } catch {}
+    try {
+        const allStores = Flux.Store.getAll();
+        for (const store of allStores) {
+            const anyStore = store as any;
+            if (anyStore && (typeof anyStore.getTrendingCategories === "function" || typeof anyStore.getTrendingGifs === "function")) {
+                return anyStore;
+            }
+            // Also check for stores with getState returning categories/gifs
+            if (anyStore && typeof anyStore.getState === "function") {
+                try {
+                    const state = anyStore.getState();
+                    if (state && (Array.isArray(state.categories) || Array.isArray(state.gifs) || Array.isArray(state.trendingGifs))) {
+                        return anyStore;
+                    }
+                } catch {}
+            }
+        }
+    } catch {}
+    return null;
+}
+
+function setStoreState(store: any, categories: any[], gifs: any[]) {
+    if (!store) return;
+    try {
+        // Try to set internal _state
+        if (store._state) {
+            store._state = {
+                ...store._state,
+                categories,
+                gifs,
+                trendingGifs: gifs,
+                trendingCategories: categories,
+            };
+        }
+        // Try to mutate getState() return value
+        if (typeof store.getState === "function") {
+            const state = store.getState();
+            if (state && typeof state === "object") {
+                if (Array.isArray(state.categories)) state.categories = categories;
+                if (Array.isArray(state.gifs)) state.gifs = gifs;
+                if (Array.isArray(state.trendingGifs)) state.trendingGifs = gifs;
+                if (Array.isArray(state.trendingCategories)) state.trendingCategories = categories;
+            }
+        }
+        // Also set direct properties as fallback
+        store.categories = categories;
+        store.gifs = gifs;
+        store.trendingGifs = gifs;
+        store.trendingCategories = categories;
+    } catch (e) {
+        console.error("[GifProvider] Error setting store state:", e);
+    }
+}
+
+function handleProviderChange(newValue: string) {
+    categoriesCache = null;
+    categoriesCacheTime = 0;
+    trendingGifsCache = null;
+    trendingGifsCacheTime = 0;
+    cachedProvider = null;
+
+    const store = getGifPickerSearchStore();
+
+    // Clear store state immediately so old content disappears
+    setStoreState(store, [], []);
+    if (store) {
+        try { store.emitChange(); } catch (e) {}
+    }
+
+    try {
+        if (FluxDispatcher) {
+            FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
+            FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", gifs: [], categories: [] });
+            FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
+            FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
+        }
+    } catch (e) {
+        console.error("[GifProvider] Error clearing GIF picker store:", e);
+    }
+
+    // Asynchronously fetch and update cache
+    Promise.all([
+        fetchCategories(newValue),
+        trendingFromProvider(50, newValue)
+    ]).then(([categories, gifs]) => {
+        categoriesCache = categories;
+        categoriesCacheTime = Date.now();
+        trendingGifsCache = gifs;
+        trendingGifsCacheTime = Date.now();
+        cachedProvider = newValue;
+
+        // Push new data into store state directly
+        setStoreState(store, categories, gifs);
+        if (store) {
+            try { store.emitChange(); } catch (e) {}
+        }
+
+        if (FluxDispatcher) {
+            FluxDispatcher.dispatch({
+                type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
+                gifs: gifs,
+                categories: categories,
+                trending: { gifs: gifs, categories: categories }
+            });
+            FluxDispatcher.dispatch({
+                type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS",
+                categories: categories
+            });
+        }
+
+        // Update placeholder and dropdown to reflect new provider
+        patchPlaceholder();
+    }).catch(err => {
+        console.error("[GifProvider] Error updating store on provider change:", err);
+    });
+}
 
 // Tenor Web API credentials (same key used by tenor.com's frontend)
 const TENOR_WEB_API_KEY = "AIzaSyCZt6SSh5VgVPzD9fhyzG1DprdPRhtoaR4";
@@ -25,36 +177,8 @@ export const settings = definePluginSettings({
             { label: "Serika GIFs", value: "serika" },
             { label: "Imgur (Client ID required)", value: "imgur" },
         ],
-        onChange(newValue) {
-            categoriesCache = null;
-            categoriesCacheTime = 0;
-            cachedProvider = null;
-            try {
-                if (FluxDispatcher) {
-                    FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
-                    FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", gifs: [], categories: [] });
-                    FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
-                    FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
-                }
-            } catch (e) {
-                console.error("[GifProvider] Error clearing GIF picker store:", e);
-            }
-
-            // Asynchronously fetch and dispatch new provider's contents
-            Promise.all([
-                fetchCategories(newValue),
-                trendingFromProvider(50, newValue)
-            ]).then(([categories, gifs]) => {
-                if (FluxDispatcher) {
-                    FluxDispatcher.dispatch({
-                        type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
-                        gifs: gifs,
-                        categories: categories
-                    });
-                }
-            }).catch(err => {
-                console.error("[GifProvider] Error updating store on provider change:", err);
-            });
+        onChange(newValue: string) {
+            handleProviderChange(newValue);
         }
     },
     giphyApiKey: {
@@ -84,28 +208,7 @@ export const settings = definePluginSettings({
     },
 });
 
-// Discord GIF format interface
-interface DiscordGif {
-    id: string;
-    title: string;
-    url: string;
-    src: string;
-    gif_src: string;
-    width: number;
-    height: number;
-    preview: string;
-}
 
-interface DiscordCategory {
-    name: string;
-    src: string;
-}
-
-// Cache for categories
-let categoriesCache: DiscordCategory[] | null = null;
-let categoriesCacheTime = 0;
-let cachedProvider: string | null = null;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Safe fetch wrapper — never throws, returns null on failure
 async function safeFetch(url: string, options?: RequestInit): Promise<any | null> {
@@ -576,22 +679,33 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
 
 async function trendingFromProvider(limit: number = 50, providerOverride?: string): Promise<DiscordGif[]> {
     const provider = providerOverride || settings.store.provider;
+    const useCache = !providerOverride;
+
+    if (useCache && trendingGifsCache && Date.now() - trendingGifsCacheTime < CACHE_DURATION && cachedProvider === provider) {
+        return trendingGifsCache;
+    }
 
     try {
+        let gifs: DiscordGif[] = [];
         switch (provider) {
             case "tenor_web": {
                 const data = await safeFetch(
                     `${TENOR_WEB_BASE}/featured?key=${TENOR_WEB_API_KEY}&client_key=${TENOR_WEB_CLIENT_KEY}&limit=${limit}&contentfilter=low`
                 );
-                return transformTenorWebToDiscord(data);
+                gifs = transformTenorWebToDiscord(data);
+                break;
             }
             case "giphy": {
                 const apiKey = settings.store.giphyApiKey?.trim();
-                if (!apiKey) return [];
-                const data = await safeFetch(
-                    `https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`
-                );
-                return transformGiphyToDiscord(data);
+                if (!apiKey) {
+                    gifs = [];
+                } else {
+                    const data = await safeFetch(
+                        `https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`
+                    );
+                    gifs = transformGiphyToDiscord(data);
+                }
+                break;
             }
             case "serika": {
                 const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
@@ -602,29 +716,46 @@ async function trendingFromProvider(limit: number = 50, providerOverride?: strin
                     `${baseUrl}/api/gifs?sort=trending&limit=${limit}`,
                     { headers }
                 );
-                return transformSerikaToDiscord(data);
+                gifs = transformSerikaToDiscord(data);
+                break;
             }
             case "imgur": {
                 const clientId = settings.store.imgurClientId?.trim();
-                if (!clientId) return [];
-                // Imgur viral gallery (trending animated content)
-                const data = await safeFetch(
-                    `https://api.imgur.com/3/gallery/hot/viral/0`,
-                    { headers: { Authorization: `Client-ID ${clientId}` } }
-                );
-                return transformImgurToDiscord(data).slice(0, limit);
+                if (!clientId) {
+                    gifs = [];
+                } else {
+                    // Imgur viral gallery (trending animated content)
+                    const data = await safeFetch(
+                        `https://api.imgur.com/3/gallery/hot/viral/0`,
+                        { headers: { Authorization: `Client-ID ${clientId}` } }
+                    );
+                    gifs = transformImgurToDiscord(data).slice(0, limit);
+                }
+                break;
             }
             case "klipy": {
                 const apiKey = settings.store.klipyApiKey?.trim();
-                if (!apiKey) return [];
-                // Klipy: API key goes in URL path
-                const data = await safeFetch(
-                    `https://api.klipy.com/api/v1/${apiKey}/gifs/trending?limit=${limit}`
-                );
-                return transformKlipyToDiscord(data);
+                if (!apiKey) {
+                    gifs = [];
+                } else {
+                    // Klipy: API key goes in URL path
+                    const data = await safeFetch(
+                        `https://api.klipy.com/api/v1/${apiKey}/gifs/trending?limit=${limit}`
+                    );
+                    gifs = transformKlipyToDiscord(data);
+                }
+                break;
             }
-            default: return [];
+            default:
+                gifs = [];
         }
+
+        if (useCache) {
+            trendingGifsCache = gifs;
+            trendingGifsCacheTime = Date.now();
+            cachedProvider = provider;
+        }
+        return gifs;
     } catch (err) {
         console.error("[GifProvider] Trending error:", err);
         return [];
@@ -649,6 +780,58 @@ function getSearchPlaceholder(provider: string): string {
     // Default fallback
     const verb = localizedSearchVerb || "Search";
     return `${verb} ${name}`;
+}
+
+function injectDropdown(container: Element) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "gif-provider-dropdown-wrapper";
+    wrapper.style.display = "flex";
+    wrapper.style.alignItems = "center";
+    wrapper.style.marginLeft = "8px";
+    wrapper.style.flexShrink = "0";
+
+    const select = document.createElement("select");
+    select.className = "gif-provider-dropdown";
+    select.title = "Switch GIF Provider";
+
+    // Compact styling that blends into Discord's UI
+    select.style.padding = "4px 8px";
+    select.style.borderRadius = "4px";
+    select.style.border = "1px solid var(--border-medium, #1e1f22)";
+    select.style.backgroundColor = "var(--input-background, #1e1f22)";
+    select.style.color = "var(--text-normal, #dbdee1)";
+    select.style.fontSize = "12px";
+    select.style.fontWeight = "500";
+    select.style.cursor = "pointer";
+    select.style.outline = "none";
+    select.style.fontFamily = "var(--font-primary, sans-serif)";
+    select.style.appearance = "auto";
+    select.style.minWidth = "80px";
+
+    const providers = [
+        { label: "Tenor", value: "tenor_web" },
+        { label: "Giphy", value: "giphy" },
+        { label: "Klipy", value: "klipy" },
+        { label: "Serika", value: "serika" },
+        { label: "Imgur", value: "imgur" },
+    ];
+
+    providers.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p.value;
+        opt.textContent = p.label;
+        opt.selected = settings.store.provider === p.value;
+        select.appendChild(opt);
+    });
+
+    select.addEventListener("change", () => {
+        const newValue = select.value;
+        settings.store.provider = newValue;
+        handleProviderChange(newValue);
+    });
+
+    wrapper.appendChild(select);
+    container.appendChild(wrapper);
 }
 
 function patchPlaceholder() {
@@ -689,6 +872,19 @@ function patchPlaceholder() {
                 input.setAttribute("placeholder", targetPlaceholder);
                 input.setAttribute("aria-label", targetPlaceholder);
             }
+
+            // Find nearest parent flex container inside header to inject dropdown
+            const headerFlex = input.closest('div[class*="header"] div[class*="flex"]');
+            if (headerFlex) {
+                const dropdown = headerFlex.querySelector<HTMLSelectElement>(".gif-provider-dropdown");
+                if (dropdown) {
+                    if (dropdown.value !== provider) {
+                        dropdown.value = provider;
+                    }
+                } else {
+                    injectDropdown(headerFlex);
+                }
+            }
         }
     }
 }
@@ -715,6 +911,38 @@ function stopPlaceholderObserver() {
         observer = null;
     }
     localizedSearchVerb = "";
+    document.querySelectorAll(".gif-provider-dropdown-wrapper").forEach(el => el.remove());
+    document.querySelectorAll(".gif-provider-dropdown").forEach(el => el.remove());
+}
+
+// ─── Search Store Getter Overrides ──────────────────────────────────────────
+
+function ensureStorePatched() {
+    const store = getGifPickerSearchStore();
+    if (store && !store.originalGetTrendingCategories) {
+        console.log("[GifProvider] Patching search store getters");
+        store.originalGetTrendingCategories = store.getTrendingCategories;
+        store.originalGetTrendingGifs = store.getTrendingGifs;
+        store.originalGetState = store.getState;
+
+        store.getTrendingCategories = () => categoriesCache || [];
+        store.getTrendingGifs = () => trendingGifsCache || [];
+
+        // Also patch getState to inject our data into the returned state
+        if (typeof store.getState === "function") {
+            store.getState = () => {
+                const state = store.originalGetState.call(store);
+                return {
+                    ...state,
+                    categories: categoriesCache || state?.categories || [],
+                    gifs: trendingGifsCache || state?.gifs || [],
+                    trendingGifs: trendingGifsCache || state?.trendingGifs || [],
+                    trendingCategories: categoriesCache || state?.trendingCategories || [],
+                };
+            };
+        }
+    }
+    return store;
 }
 
 // ─── Plugin definition ──────────────────────────────────────────────────────
@@ -734,9 +962,10 @@ export default definePlugin({
 
     start() {
         this._stopped = false;
-        // Reset category cache when switching providers
         categoriesCache = null;
         categoriesCacheTime = 0;
+        trendingGifsCache = null;
+        trendingGifsCacheTime = 0;
 
         console.log("[GifProvider] Started with provider:", settings.store.provider);
 
@@ -783,6 +1012,26 @@ export default definePlugin({
         // Start watching for search input to patch its placeholder
         startPlaceholderObserver();
 
+        // Patch store getters
+        ensureStorePatched();
+
+        // Initial fetch to populate caches
+        Promise.all([
+            fetchCategories(),
+            trendingFromProvider(50)
+        ]).then(() => {
+            const store = ensureStorePatched();
+            if (store) {
+                try {
+                    store.emitChange();
+                } catch (e) {
+                    console.error("[GifProvider] Error emitting change after initial fetch:", e);
+                }
+            }
+        }).catch(err => {
+            console.error("[GifProvider] Initial fetch error:", err);
+        });
+
         // Expose to window for debugging
         (window as any).GifProvider = {
             search: searchFromProvider,
@@ -790,6 +1039,8 @@ export default definePlugin({
             categories: fetchCategories,
             settings: settings.store,
             plugin: this,
+            getStore: getGifPickerSearchStore,
+            patchStore: ensureStorePatched
         };
         console.log("[GifProvider] Debug: Use window.GifProvider.search('cats') to test");
     },
@@ -838,12 +1089,36 @@ export default definePlugin({
             RestAPI.get = this.originalGet;
         }
         
+        // Restore original store getters
+        const store = getGifPickerSearchStore();
+        if (store) {
+            if (store.originalGetTrendingCategories) {
+                store.getTrendingCategories = store.originalGetTrendingCategories;
+                delete store.originalGetTrendingCategories;
+            }
+            if (store.originalGetTrendingGifs) {
+                store.getTrendingGifs = store.originalGetTrendingGifs;
+                delete store.originalGetTrendingGifs;
+            }
+            if (store.originalGetState) {
+                store.getState = store.originalGetState;
+                delete store.originalGetState;
+            }
+            try {
+                store.emitChange();
+            } catch (e) {
+                console.error("[GifProvider] Error emitting change on stop:", e);
+            }
+        }
+
         // Stop placeholder observer
         stopPlaceholderObserver();
 
         // Clear cache on stop
         categoriesCache = null;
         categoriesCacheTime = 0;
+        trendingGifsCache = null;
+        trendingGifsCacheTime = 0;
         delete (window as any).GifProvider;
     },
 });

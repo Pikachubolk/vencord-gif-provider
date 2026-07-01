@@ -1,6 +1,6 @@
 {
   "name": "vencord-gif-provider",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Vencord plugin to switch GIF providers (Tenor Web, Giphy, Klipy, Serika GIFs, Imgur)",
   "main": "index.ts",
   "author": "Serika",
