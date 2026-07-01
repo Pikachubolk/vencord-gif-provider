@@ -7,7 +7,7 @@
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { RestAPI } from "@webpack/common";
+import { RestAPI, FluxDispatcher } from "@webpack/common";
 
 // Tenor Web API credentials (same key used by tenor.com's frontend)
 const TENOR_WEB_API_KEY = "AIzaSyCZt6SSh5VgVPzD9fhyzG1DprdPRhtoaR4";
@@ -25,6 +25,20 @@ export const settings = definePluginSettings({
             { label: "Serika GIFs", value: "serika" },
             { label: "Imgur (Client ID required)", value: "imgur" },
         ],
+        onChange(newValue) {
+            categoriesCache = null;
+            categoriesCacheTime = 0;
+            cachedProvider = null;
+            try {
+                if (FluxDispatcher) {
+                    FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
+                    FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", gifs: [] });
+                    FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
+                }
+            } catch (e) {
+                console.error("[GifProvider] Error clearing GIF picker store:", e);
+            }
+        }
     },
     giphyApiKey: {
         type: OptionType.STRING,
@@ -158,16 +172,21 @@ function transformGiphyToDiscord(data: any): DiscordGif[] {
 
     return data.data.map((gif: any) => {
         const original = gif.images?.original || {};
+        const fixedHeight = gif.images?.fixed_height || {};
         const preview = gif.images?.fixed_height_small || gif.images?.preview_gif || {};
+        
+        const videoUrl = original.mp4 || fixedHeight.mp4 || original.url || "";
+        const previewVideoUrl = preview.mp4 || fixedHeight.mp4 || original.mp4 || preview.url || original.url || "";
+
         return {
             id: gif.id || Math.random().toString(36).slice(2),
             title: gif.title || "",
             url: original.url || gif.images?.downsized?.url || "",
-            src: original.url || gif.images?.downsized?.url || "",
+            src: videoUrl,
             gif_src: original.url || gif.images?.downsized?.url || "",
             width: parseInt(original.width) || 200,
             height: parseInt(original.height) || 200,
-            preview: preview.url || original.url || "",
+            preview: previewVideoUrl,
         };
     }).filter((gif: DiscordGif) => gif.url);
 }
@@ -220,30 +239,36 @@ function transformImgurToDiscord(data: any): DiscordGif[] {
         if (item.is_album && Array.isArray(item.images)) {
             for (const img of item.images) {
                 if (img.animated || img.type?.includes("gif") || img.mp4 || img.link?.endsWith(".gif")) {
+                    const directUrl = img.link || img.mp4 || "";
+                    const videoUrl = img.mp4 || img.link || "";
+                    const previewUrl = img.mp4 || (img.link ? img.link.replace(/\.gif$/i, "s.gif") : "") || "";
                     results.push({
                         id: img.id || Math.random().toString(36).slice(2),
                         title: item.title || img.title || img.description || "",
-                        url: img.mp4 || img.link || "",
-                        src: img.mp4 || img.link || "",
+                        url: directUrl,
+                        src: videoUrl,
                         gif_src: img.link || "",
                         width: img.width || 200,
                         height: img.height || 200,
-                        preview: img.link ? img.link.replace(/\.gif$/i, "s.gif") : img.link || "",
+                        preview: previewUrl,
                     });
                 }
             }
         }
         // Direct image (non-album gallery item)
         else if (item.animated || item.type?.includes("gif") || item.mp4 || item.link?.endsWith(".gif")) {
+            const directUrl = item.link || item.mp4 || "";
+            const videoUrl = item.mp4 || item.link || "";
+            const previewUrl = item.mp4 || (item.link ? item.link.replace(/\.gif$/i, "s.gif") : "") || "";
             results.push({
                 id: item.id || Math.random().toString(36).slice(2),
                 title: item.title || item.description || "",
-                url: item.mp4 || item.link || "",
-                src: item.mp4 || item.link || "",
+                url: directUrl,
+                src: videoUrl,
                 gif_src: item.link || "",
                 width: item.width || 200,
                 height: item.height || 200,
-                preview: item.link ? item.link.replace(/\.gif$/i, "s.gif") : item.link || "",
+                preview: previewUrl,
             });
         }
     }
@@ -259,25 +284,31 @@ function transformImgurToDiscord(data: any): DiscordGif[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function transformKlipyToDiscord(data: any): DiscordGif[] {
-    // Klipy wraps response in { result, data: { data: [...] } }
     const items = data?.data?.data || data?.data || data?.results || [];
     if (!Array.isArray(items)) return [];
 
     return items.map((gif: any) => {
         const file = gif.file || {};
-        // Prefer HD gif, fall back to MD, then SM
-        const hdGif = file.hd?.gif || file.md?.gif || file.sm?.gif || {};
-        const previewGif = file.sm?.gif || file.xs?.gif || hdGif;
+        const hd = file.hd || {};
+        const md = file.md || {};
+        const sm = file.sm || {};
+        const xs = file.xs || {};
+
+        const hdGif = hd.gif || md.gif || sm.gif || {};
+        const previewGif = sm.gif || xs.gif || hdGif;
+
+        const videoUrl = hd.mp4?.url || hd.webm?.url || md.mp4?.url || md.webm?.url || sm.mp4?.url || sm.webm?.url || hdGif.url || "";
+        const previewVideoUrl = sm.mp4?.url || sm.webm?.url || xs.mp4?.url || xs.webm?.url || videoUrl || previewGif.url || "";
 
         return {
             id: gif.id?.toString() || gif.slug || Math.random().toString(36).slice(2),
             title: gif.title || "",
             url: hdGif.url || "",
-            src: hdGif.url || "",
+            src: videoUrl,
             gif_src: hdGif.url || "",
             width: hdGif.width || 200,
             height: hdGif.height || 200,
-            preview: previewGif.url || hdGif.url || "",
+            preview: previewVideoUrl,
         };
     }).filter((gif: DiscordGif) => gif.url);
 }
