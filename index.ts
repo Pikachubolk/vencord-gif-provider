@@ -19,6 +19,8 @@ interface DiscordGif {
     width: number;
     height: number;
     preview: string;
+    format?: number;
+    type?: string;
 }
 
 interface DiscordCategory {
@@ -31,6 +33,7 @@ let categoriesCache: DiscordCategory[] | null = null;
 let categoriesCacheTime = 0;
 let trendingGifsCache: DiscordGif[] | null = null;
 let trendingGifsCacheTime = 0;
+let searchResultsCache: Map<string, DiscordGif[]> = new Map();
 let cachedProvider: string | null = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
@@ -120,6 +123,7 @@ function handleProviderChange(newValue: string) {
     categoriesCacheTime = 0;
     trendingGifsCache = null;
     trendingGifsCacheTime = 0;
+    searchResultsCache.clear();
     cachedProvider = null;
 
     const store = getGifPickerSearchStore();
@@ -276,6 +280,8 @@ function transformTenorWebToDiscord(data: any): DiscordGif[] {
             width: dims[0] || 200,
             height: dims[1] || 200,
             preview: previewFormat.url || gifFormat.url || "",
+            format: 2,
+            type: "GIF",
         };
     }).filter((gif: DiscordGif) => gif.url);
 }
@@ -317,6 +323,8 @@ function transformGiphyToDiscord(data: any): DiscordGif[] {
             width: parseInt(original.width) || 200,
             height: parseInt(original.height) || 200,
             preview: previewVideoUrl,
+            format: 2,
+            type: "GIF",
         };
     }).filter((gif: DiscordGif) => gif.url);
 }
@@ -345,6 +353,8 @@ function transformSerikaToDiscord(data: any): DiscordGif[] {
             width: gif.width || 200,
             height: gif.height || 200,
             preview: gif.thumbnailUrl || webmUrl,
+            format: 2,
+            type: "GIF",
         };
     }).filter((gif: DiscordGif) => gif.url);
 }
@@ -381,6 +391,8 @@ function transformImgurToDiscord(data: any): DiscordGif[] {
                         width: img.width || 200,
                         height: img.height || 200,
                         preview: previewUrl,
+                        format: 2,
+                        type: "GIF",
                     });
                 }
             }
@@ -399,6 +411,8 @@ function transformImgurToDiscord(data: any): DiscordGif[] {
                 width: item.width || 200,
                 height: item.height || 200,
                 preview: previewUrl,
+                format: 2,
+                type: "GIF",
             });
         }
     }
@@ -439,6 +453,8 @@ function transformKlipyToDiscord(data: any): DiscordGif[] {
             width: hdGif.width || 200,
             height: hdGif.height || 200,
             preview: previewVideoUrl,
+            format: 2,
+            type: "GIF",
         };
     }).filter((gif: DiscordGif) => gif.url);
 }
@@ -477,12 +493,14 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
     const tags = tagsData.tags || [];
     const categories: DiscordCategory[] = [];
 
-    // Fetch sample GIFs for top tags in parallel
+    // Fetch sample GIFs for top tags in parallel (fetch a few and pick a random one so previews don't all repeat)
     const tagPromises = tags.slice(0, 20).map(async (tag: any) => {
         try {
-            const gifData = await safeFetch(`${baseUrl}/api/gifs?tag=${tag.slug}&limit=1&sort=views`, { headers });
-            const gif = gifData?.gifs?.[0];
-            if (gif) {
+            const gifData = await safeFetch(`${baseUrl}/api/gifs?tag=${tag.slug}&limit=5&sort=views`, { headers });
+            const gifs = gifData?.gifs || [];
+            if (gifs.length > 0) {
+                // Pick a random GIF from the results, not always the first one
+                const gif = gifs[Math.floor(Math.random() * gifs.length)];
                 return {
                     name: tag.name,
                     src: gif.thumbnailUrl || gif.url || "",
@@ -626,14 +644,20 @@ async function fetchCategories(providerOverride?: string): Promise<DiscordCatego
 
 async function searchFromProvider(query: string, limit: number = 50): Promise<DiscordGif[]> {
     const provider = settings.store.provider;
+    const cacheKey = `${provider}:${query.toLowerCase().trim()}`;
+    if (searchResultsCache.has(cacheKey)) {
+        return searchResultsCache.get(cacheKey)!;
+    }
 
     try {
+        let gifs: DiscordGif[] = [];
         switch (provider) {
             case "tenor_web": {
                 const data = await safeFetch(
                     `${TENOR_WEB_BASE}/search?key=${TENOR_WEB_API_KEY}&client_key=${TENOR_WEB_CLIENT_KEY}&q=${encodeURIComponent(query)}&limit=${limit}&contentfilter=low`
                 );
-                return deduplicateGifs(transformTenorWebToDiscord(data));
+                gifs = transformTenorWebToDiscord(data);
+                break;
             }
             case "giphy": {
                 const apiKey = settings.store.giphyApiKey?.trim();
@@ -644,7 +668,8 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                 const data = await safeFetch(
                     `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`
                 );
-                return deduplicateGifs(transformGiphyToDiscord(data));
+                gifs = transformGiphyToDiscord(data);
+                break;
             }
             case "serika": {
                 const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
@@ -655,7 +680,8 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                     `${baseUrl}/api/gifs?search=${encodeURIComponent(query)}&limit=${limit}`,
                     { headers }
                 );
-                return deduplicateGifs(transformSerikaToDiscord(data));
+                gifs = transformSerikaToDiscord(data);
+                break;
             }
             case "imgur": {
                 const clientId = settings.store.imgurClientId?.trim();
@@ -668,7 +694,8 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                     `https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`,
                     { headers: { Authorization: `Client-ID ${clientId}` } }
                 );
-                return deduplicateGifs(transformImgurToDiscord(data).slice(0, limit));
+                gifs = transformImgurToDiscord(data).slice(0, limit);
+                break;
             }
             case "klipy": {
                 const apiKey = settings.store.klipyApiKey?.trim();
@@ -680,10 +707,14 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                 const data = await safeFetch(
                     `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}`
                 );
-                return deduplicateGifs(transformKlipyToDiscord(data));
+                gifs = transformKlipyToDiscord(data);
+                break;
             }
             default: return [];
         }
+        const results = deduplicateGifs(gifs);
+        searchResultsCache.set(cacheKey, results);
+        return results;
     } catch (err) {
         console.error("[GifProvider] Search error:", err);
         return [];
@@ -880,6 +911,14 @@ function patchPlaceholder() {
     const provider = settings.store.provider;
     const targetPlaceholder = getSearchPlaceholder(provider);
 
+    // Remove provider switch from the Favorites header (it has no search input and a title like Favorites)
+    document.querySelectorAll<HTMLElement>('.gif-provider-dropdown-wrapper').forEach(wrapper => {
+        const headerFlex = wrapper.closest('div[class*="header"] div[class*="flex"]');
+        if (headerFlex && !headerFlex.querySelector('input')) {
+            wrapper.remove();
+        }
+    });
+
     // Find all search inputs in the expression picker / GIF picker
     const inputs = document.querySelectorAll<HTMLInputElement>(
         '#gif-picker-tab-panel input[placeholder], [class*="expressionPicker"] input[placeholder], [class*="searchBar"] input[placeholder], input[class*="searchBar"]'
@@ -917,7 +956,8 @@ function patchPlaceholder() {
 
             // Find nearest parent flex container inside header to inject dropdown
             const headerFlex = input.closest('div[class*="header"] div[class*="flex"]');
-            if (headerFlex) {
+            if (headerFlex && headerFlex.querySelector('input')) {
+                // Don't inject into Favorites/other headers that have no search input
                 const dropdown = headerFlex.querySelector<HTMLSelectElement>(".gif-provider-dropdown");
                 if (dropdown) {
                     if (dropdown.value !== provider) {
@@ -966,9 +1006,23 @@ function ensureStorePatched() {
         store.originalGetTrendingCategories = store.getTrendingCategories;
         store.originalGetTrendingGifs = store.getTrendingGifs;
         store.originalGetState = store.getState;
+        store.originalGetSearchResults = store.getSearchResults;
+        store.originalGetSearchQuery = store.getSearchQuery;
+        store.originalGetSearchResultsByQuery = store.getSearchResultsByQuery;
 
         store.getTrendingCategories = () => categoriesCache || [];
         store.getTrendingGifs = () => trendingGifsCache || [];
+
+        // Patch search result getters if they exist
+        if (typeof store.originalGetSearchResults === "function") {
+            store.getSearchResults = () => Array.from(searchResultsCache.values()).flat();
+        }
+        if (typeof store.originalGetSearchQuery === "function") {
+            store.getSearchQuery = () => "";
+        }
+        if (typeof store.originalGetSearchResultsByQuery === "function") {
+            store.getSearchResultsByQuery = (query: string) => searchResultsCache.get(query) || [];
+        }
 
         // Also patch getState to inject our data into the returned state
         if (typeof store.getState === "function") {
@@ -1008,6 +1062,7 @@ export default definePlugin({
         categoriesCacheTime = 0;
         trendingGifsCache = null;
         trendingGifsCacheTime = 0;
+        searchResultsCache.clear();
 
         console.log("[GifProvider] Started with provider:", settings.store.provider);
 
@@ -1091,10 +1146,10 @@ export default definePlugin({
         try {
             const gifs = await searchFromProvider(query, 50);
             console.log("[GifProvider] Search results:", gifs.length);
-            return { body: gifs };
+            return { body: gifs, status: 200, ok: true, headers: {} };
         } catch (err) {
             console.error("[GifProvider] handleSearch error:", err);
-            return { body: [] };
+            return { body: [], status: 200, ok: true, headers: {} };
         }
     },
 
@@ -1106,10 +1161,20 @@ export default definePlugin({
             ]);
 
             console.log("[GifProvider] Trending results:", gifs.length, "categories:", categories.length);
-            return { body: { categories: categories, gifs: gifs } };
+            return {
+                body: {
+                    categories: categories,
+                    gifs: gifs,
+                    trending: { gifs, categories }
+                },
+                status: 200, ok: true, headers: {}
+            };
         } catch (err) {
             console.error("[GifProvider] handleTrending error:", err);
-            return { body: { categories: [], gifs: [] } };
+            return {
+                body: { categories: [], gifs: [], trending: { gifs: [], categories: [] } },
+                status: 200, ok: true, headers: {}
+            };
         }
     },
 
@@ -1117,10 +1182,10 @@ export default definePlugin({
         try {
             const gifs = await trendingFromProvider(50);
             console.log("[GifProvider] TrendingGifs results:", gifs.length);
-            return { body: gifs };
+            return { body: gifs, status: 200, ok: true, headers: {} };
         } catch (err) {
             console.error("[GifProvider] handleTrendingGifs error:", err);
-            return { body: [] };
+            return { body: [], status: 200, ok: true, headers: {} };
         }
     },
 
@@ -1146,6 +1211,18 @@ export default definePlugin({
                 store.getState = store.originalGetState;
                 delete store.originalGetState;
             }
+            if (store.originalGetSearchResults) {
+                store.getSearchResults = store.originalGetSearchResults;
+                delete store.originalGetSearchResults;
+            }
+            if (store.originalGetSearchQuery) {
+                store.getSearchQuery = store.originalGetSearchQuery;
+                delete store.originalGetSearchQuery;
+            }
+            if (store.originalGetSearchResultsByQuery) {
+                store.getSearchResultsByQuery = store.originalGetSearchResultsByQuery;
+                delete store.originalGetSearchResultsByQuery;
+            }
             try {
                 store.emitChange();
             } catch (e) {
@@ -1161,6 +1238,7 @@ export default definePlugin({
         categoriesCacheTime = 0;
         trendingGifsCache = null;
         trendingGifsCacheTime = 0;
+        searchResultsCache.clear();
         delete (window as any).GifProvider;
     },
 });
