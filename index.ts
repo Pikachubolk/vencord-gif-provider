@@ -9,16 +9,21 @@ import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { RestAPI } from "@webpack/common";
 
+// Tenor Web API credentials (same key used by tenor.com's frontend)
+const TENOR_WEB_API_KEY = "AIzaSyCZt6SSh5VgVPzD9fhyzG1DprdPRhtoaR4";
+const TENOR_WEB_CLIENT_KEY = "tenor_web";
+const TENOR_WEB_BASE = "https://tenor.googleapis.com/v2";
+
 export const settings = definePluginSettings({
     provider: {
         type: OptionType.SELECT,
         description: "Choose your preferred GIF provider",
         options: [
-            { label: "Tenor (Default)", value: "tenor", default: true },
+            { label: "Tenor (Web)", value: "tenor_web", default: true },
             { label: "Giphy (API key required)", value: "giphy" },
             { label: "Klipy (API key required)", value: "klipy" },
             { label: "Serika GIFs", value: "serika" },
-            { label: "Imgur (API key required)", value: "imgur" },
+            { label: "Imgur (Client ID required)", value: "imgur" },
         ],
     },
     giphyApiKey: {
@@ -28,7 +33,7 @@ export const settings = definePluginSettings({
     },
     klipyApiKey: {
         type: OptionType.STRING,
-        description: "Klipy API key",
+        description: "Klipy API key (get one at klipy.com/developers)",
         default: "",
     },
     imgurClientId: {
@@ -70,75 +75,215 @@ let categoriesCache: DiscordCategory[] | null = null;
 let categoriesCacheTime = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-// Transform Giphy response to Discord GIF format
-function transformGiphyToDiscord(data: any): DiscordGif[] {
-    return (data.data || []).map((gif: any) => ({
-        id: gif.id,
-        title: gif.title || "",
-        url: gif.images?.original?.url || gif.images?.downsized?.url,
-        src: gif.images?.original?.url || gif.images?.downsized?.url,
-        gif_src: gif.images?.original?.url || gif.images?.downsized?.url,
-        width: parseInt(gif.images?.original?.width) || 200,
-        height: parseInt(gif.images?.original?.height) || 200,
-        preview: gif.images?.fixed_height_small?.url || gif.images?.preview_gif?.url
-    }));
+// Safe fetch wrapper — never throws, returns null on failure
+async function safeFetch(url: string, options?: RequestInit): Promise<any | null> {
+    try {
+        const res = await fetch(url, options);
+        if (!res.ok) {
+            console.warn(`[GifProvider] Fetch failed (${res.status}): ${url.substring(0, 100)}`);
+            return null;
+        }
+        return await res.json();
+    } catch (err) {
+        console.error("[GifProvider] Fetch error:", err);
+        return null;
+    }
 }
 
-// Transform Serika response to Discord GIF format
+// ─────────────────────────────────────────────────────────────────────────────
+//  TENOR WEB
+//  Uses the public API key that tenor.com's frontend uses.
+//  Endpoint: https://tenor.googleapis.com/v2/{search|featured|categories}
+//  Response: { results: [{ id, title, content_description, media_formats: { gif: { url, dims }, tinygif: { url, dims } } }] }
+// ─────────────────────────────────────────────────────────────────────────────
+
+function transformTenorWebToDiscord(data: any): DiscordGif[] {
+    if (!data?.results || !Array.isArray(data.results)) return [];
+
+    return data.results.map((item: any) => {
+        const formats = item.media_formats || {};
+        const gifFormat = formats.gif || formats.mediumgif || formats.tinygif || {};
+        const previewFormat = formats.tinygif || formats.nanogif || gifFormat;
+        const dims = gifFormat.dims || [200, 200];
+
+        return {
+            id: item.id || Math.random().toString(36).slice(2),
+            title: item.title || item.content_description || "",
+            url: gifFormat.url || "",
+            src: gifFormat.url || "",
+            gif_src: gifFormat.url || "",
+            width: dims[0] || 200,
+            height: dims[1] || 200,
+            preview: previewFormat.url || gifFormat.url || "",
+        };
+    }).filter((gif: DiscordGif) => gif.url);
+}
+
+function transformTenorCategoriesToDiscord(data: any): DiscordCategory[] {
+    if (!data?.tags || !Array.isArray(data.tags)) return [];
+
+    return data.tags
+        .filter((tag: any) => tag.name && tag.image)
+        .map((tag: any) => ({
+            name: tag.name.replace(/^#/, ""),
+            src: tag.image,
+        }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  GIPHY
+//  Endpoint: https://api.giphy.com/v1/gifs/{search|trending}?api_key=...
+//  Response: { data: [{ id, title, images: { original: { url, width, height }, fixed_height_small: { url } } }] }
+// ─────────────────────────────────────────────────────────────────────────────
+
+function transformGiphyToDiscord(data: any): DiscordGif[] {
+    if (!data?.data || !Array.isArray(data.data)) return [];
+
+    return data.data.map((gif: any) => {
+        const original = gif.images?.original || {};
+        const preview = gif.images?.fixed_height_small || gif.images?.preview_gif || {};
+        return {
+            id: gif.id || Math.random().toString(36).slice(2),
+            title: gif.title || "",
+            url: original.url || gif.images?.downsized?.url || "",
+            src: original.url || gif.images?.downsized?.url || "",
+            gif_src: original.url || gif.images?.downsized?.url || "",
+            width: parseInt(original.width) || 200,
+            height: parseInt(original.height) || 200,
+            preview: preview.url || original.url || "",
+        };
+    }).filter((gif: DiscordGif) => gif.url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SERIKA GIFS
+//  Endpoint: https://gifs.serika.dev/api/gifs?search=...&limit=...&sort=trending
+//  Response: { gifs: [{ id, slug, title, url, webmUrl, thumbnailUrl, width, height }] }
+//  Tags:     https://gifs.serika.dev/api/tags?limit=...
+//  Response: { tags: [{ id, name, slug, count }] }
+// ─────────────────────────────────────────────────────────────────────────────
+
 function transformSerikaToDiscord(data: any): DiscordGif[] {
-    const gifs = data.gifs || data.data || [];
+    const gifs = data?.gifs || data?.data || [];
+    if (!Array.isArray(gifs)) return [];
+
     return gifs.map((gif: any) => {
-        const gifUrl = gif.url || gif.originalUrl;
-        // Use webmUrl if available, otherwise construct from gif URL
+        const gifUrl = gif.url || gif.originalUrl || "";
         const webmUrl = gif.webmUrl || gifUrl.replace(/\.gif$/i, ".webm");
         return {
-            id: gif.id?.toString() || gif.slug || Math.random().toString(36),
+            id: gif.id?.toString() || gif.slug || Math.random().toString(36).slice(2),
             title: gif.title || "",
             url: gifUrl,
             src: webmUrl,
             gif_src: gifUrl,
             width: gif.width || 200,
             height: gif.height || 200,
-            preview: webmUrl
+            preview: gif.thumbnailUrl || webmUrl,
         };
-    });
+    }).filter((gif: DiscordGif) => gif.url);
 }
 
-// Transform Imgur response to Discord GIF format
+// ─────────────────────────────────────────────────────────────────────────────
+//  IMGUR
+//  Endpoint: https://api.imgur.com/3/gallery/search?q=...&q_type=anigif
+//  Auth:     Authorization: Client-ID {client_id}
+//  Response: { data: [{ is_album, images: [{ id, animated, type, link, mp4, width, height }] }] }
+//
+//  IMPORTANT: Imgur gallery search returns ALBUMS with nested images arrays.
+//  We need to flatten albums and extract individual animated images.
+// ─────────────────────────────────────────────────────────────────────────────
+
 function transformImgurToDiscord(data: any): DiscordGif[] {
-    const items = (data.data || []).filter((item: any) =>
-        item.animated || item.type?.includes("gif") || item.mp4 || item.link?.endsWith(".gif")
-    );
-    return items.map((gif: any) => ({
-        id: gif.id,
-        title: gif.title || "",
-        url: gif.mp4 || gif.link,
-        src: gif.mp4 || gif.link,
-        gif_src: gif.link,
-        width: gif.width || 200,
-        height: gif.height || 200,
-        preview: gif.link?.replace(".gif", "s.gif") || gif.link
-    }));
+    if (!data?.data || !Array.isArray(data.data)) return [];
+
+    const results: DiscordGif[] = [];
+
+    for (const item of data.data) {
+        // Albums contain nested images array
+        if (item.is_album && Array.isArray(item.images)) {
+            for (const img of item.images) {
+                if (img.animated || img.type?.includes("gif") || img.mp4 || img.link?.endsWith(".gif")) {
+                    results.push({
+                        id: img.id || Math.random().toString(36).slice(2),
+                        title: item.title || img.title || img.description || "",
+                        url: img.mp4 || img.link || "",
+                        src: img.mp4 || img.link || "",
+                        gif_src: img.link || "",
+                        width: img.width || 200,
+                        height: img.height || 200,
+                        preview: img.link ? img.link.replace(/\.gif$/i, "s.gif") : img.link || "",
+                    });
+                }
+            }
+        }
+        // Direct image (non-album gallery item)
+        else if (item.animated || item.type?.includes("gif") || item.mp4 || item.link?.endsWith(".gif")) {
+            results.push({
+                id: item.id || Math.random().toString(36).slice(2),
+                title: item.title || item.description || "",
+                url: item.mp4 || item.link || "",
+                src: item.mp4 || item.link || "",
+                gif_src: item.link || "",
+                width: item.width || 200,
+                height: item.height || 200,
+                preview: item.link ? item.link.replace(/\.gif$/i, "s.gif") : item.link || "",
+            });
+        }
+    }
+
+    return results.filter(gif => gif.url);
 }
 
-// Transform Klipy response to Discord GIF format
+// ─────────────────────────────────────────────────────────────────────────────
+//  KLIPY
+//  Endpoint: https://api.klipy.com/api/v1/{API_KEY}/gifs/{search|trending}?q=...&limit=...
+//  NOTE: API key goes in the URL path, NOT as a query parameter!
+//  Response: { result: true, data: { data: [{ id, slug, title, file: { hd: { gif: { url, width, height } }, sm: { gif: { url } } } }] } }
+// ─────────────────────────────────────────────────────────────────────────────
+
 function transformKlipyToDiscord(data: any): DiscordGif[] {
-    const results = data.results || data.data || [];
-    return results.map((gif: any) => ({
-        id: gif.id,
-        title: gif.title || "",
-        url: gif.gif_url || gif.media?.gif?.url || gif.url,
-        src: gif.gif_url || gif.media?.gif?.url || gif.url,
-        gif_src: gif.gif_url || gif.media?.gif?.url || gif.url,
-        width: gif.width || 200,
-        height: gif.height || 200,
-        preview: gif.preview_url || gif.media?.preview?.url || gif.url
-    }));
+    // Klipy wraps response in { result, data: { data: [...] } }
+    const items = data?.data?.data || data?.data || data?.results || [];
+    if (!Array.isArray(items)) return [];
+
+    return items.map((gif: any) => {
+        const file = gif.file || {};
+        // Prefer HD gif, fall back to MD, then SM
+        const hdGif = file.hd?.gif || file.md?.gif || file.sm?.gif || {};
+        const previewGif = file.sm?.gif || file.xs?.gif || hdGif;
+
+        return {
+            id: gif.id?.toString() || gif.slug || Math.random().toString(36).slice(2),
+            title: gif.title || "",
+            url: hdGif.url || "",
+            src: hdGif.url || "",
+            gif_src: hdGif.url || "",
+            width: hdGif.width || 200,
+            height: hdGif.height || 200,
+            preview: previewGif.url || hdGif.url || "",
+        };
+    }).filter((gif: DiscordGif) => gif.url);
 }
 
-// Fetch categories from Serika (tags with sample GIFs)
+// ─── Category fetchers ──────────────────────────────────────────────────────
+
+async function fetchTenorWebCategories(): Promise<DiscordCategory[]> {
+    if (categoriesCache && Date.now() - categoriesCacheTime < CACHE_DURATION) {
+        return categoriesCache;
+    }
+
+    const data = await safeFetch(
+        `${TENOR_WEB_BASE}/categories?key=${TENOR_WEB_API_KEY}&client_key=${TENOR_WEB_CLIENT_KEY}&contentfilter=low`
+    );
+    if (!data) return [];
+
+    const categories = transformTenorCategoriesToDiscord(data);
+    categoriesCache = categories;
+    categoriesCacheTime = Date.now();
+    return categories;
+}
+
 async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
-    // Return cached if fresh
     if (categoriesCache && Date.now() - categoriesCacheTime < CACHE_DURATION) {
         return categoriesCache;
     }
@@ -148,73 +293,85 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
     const headers: Record<string, string> = {};
     if (apiKey) headers["X-API-Key"] = apiKey;
 
-    try {
-        // Fetch popular tags
-        const tagsRes = await fetch(`${baseUrl}/api/tags?limit=30`, { headers });
-        const tagsData = await tagsRes.json();
-        const tags = tagsData.tags || [];
+    const tagsData = await safeFetch(`${baseUrl}/api/tags?limit=30`, { headers });
+    if (!tagsData) return [];
 
-        // Build categories with a sample GIF from each tag
-        const categories: DiscordCategory[] = [];
-        
-        // Fetch sample GIFs for top tags in parallel
-        const tagPromises = tags.slice(0, 20).map(async (tag: any) => {
-            try {
-                const gifRes = await fetch(`${baseUrl}/api/gifs?tag=${tag.slug}&limit=1&sort=views`, { headers });
-                const gifData = await gifRes.json();
-                const gif = gifData.gifs?.[0];
-                if (gif) {
-                    const webmUrl = gif.webmUrl || gif.url.replace(/\.gif$/i, ".webm");
-                    return {
-                        name: tag.name,
-                        src: webmUrl
-                    };
-                }
-            } catch {
-                return null;
+    const tags = tagsData.tags || [];
+    const categories: DiscordCategory[] = [];
+
+    // Fetch sample GIFs for top tags in parallel
+    const tagPromises = tags.slice(0, 20).map(async (tag: any) => {
+        try {
+            const gifData = await safeFetch(`${baseUrl}/api/gifs?tag=${tag.slug}&limit=1&sort=views`, { headers });
+            const gif = gifData?.gifs?.[0];
+            if (gif) {
+                return {
+                    name: tag.name,
+                    src: gif.thumbnailUrl || gif.webmUrl || gif.url?.replace(/\.gif$/i, ".webm") || "",
+                };
             }
-            return null;
-        });
+        } catch { /* ignore */ }
+        return null;
+    });
 
-        const results = await Promise.all(tagPromises);
-        for (const cat of results) {
-            if (cat) categories.push(cat);
+    const results = await Promise.all(tagPromises);
+    for (const cat of results) {
+        if (cat && cat.src) categories.push(cat);
+    }
+
+    categoriesCache = categories;
+    categoriesCacheTime = Date.now();
+    return categories;
+}
+
+async function fetchCategories(): Promise<DiscordCategory[]> {
+    const provider = settings.store.provider;
+    try {
+        switch (provider) {
+            case "tenor_web": return await fetchTenorWebCategories();
+            case "serika": return await fetchSerikaCategories();
+            default: return [];
         }
-
-        // Cache the results
-        categoriesCache = categories;
-        categoriesCacheTime = Date.now();
-
-        return categories;
     } catch (err) {
-        console.error("[GifProvider] Error fetching categories:", err);
+        console.error("[GifProvider] Categories error:", err);
         return [];
     }
 }
 
-// Search GIFs from provider
+// ─── Search / Trending ──────────────────────────────────────────────────────
+
 async function searchFromProvider(query: string, limit: number = 50): Promise<DiscordGif[]> {
     const provider = settings.store.provider;
-    if (provider === "tenor") return [];
 
     try {
         switch (provider) {
+            case "tenor_web": {
+                const data = await safeFetch(
+                    `${TENOR_WEB_BASE}/search?key=${TENOR_WEB_API_KEY}&client_key=${TENOR_WEB_CLIENT_KEY}&q=${encodeURIComponent(query)}&limit=${limit}&contentfilter=low`
+                );
+                return transformTenorWebToDiscord(data);
+            }
             case "giphy": {
                 const apiKey = settings.store.giphyApiKey?.trim();
                 if (!apiKey) {
                     console.warn("[GifProvider] Giphy requires an API key");
                     return [];
                 }
-                const res = await fetch(`https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`);
-                return transformGiphyToDiscord(await res.json());
+                const data = await safeFetch(
+                    `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`
+                );
+                return transformGiphyToDiscord(data);
             }
             case "serika": {
                 const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
                 const apiKey = settings.store.serikaApiKey?.trim();
                 const headers: Record<string, string> = {};
                 if (apiKey) headers["X-API-Key"] = apiKey;
-                const res = await fetch(`${baseUrl}/api/gifs?search=${encodeURIComponent(query)}&limit=${limit}`, { headers });
-                return transformSerikaToDiscord(await res.json());
+                const data = await safeFetch(
+                    `${baseUrl}/api/gifs?search=${encodeURIComponent(query)}&limit=${limit}`,
+                    { headers }
+                );
+                return transformSerikaToDiscord(data);
             }
             case "imgur": {
                 const clientId = settings.store.imgurClientId?.trim();
@@ -222,10 +379,12 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                     console.warn("[GifProvider] Imgur requires a Client ID");
                     return [];
                 }
-                const res = await fetch(`https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`, {
-                    headers: { Authorization: `Client-ID ${clientId}` }
-                });
-                return transformImgurToDiscord(await res.json()).slice(0, limit);
+                // Imgur gallery search with animated filter
+                const data = await safeFetch(
+                    `https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`,
+                    { headers: { Authorization: `Client-ID ${clientId}` } }
+                );
+                return transformImgurToDiscord(data).slice(0, limit);
             }
             case "klipy": {
                 const apiKey = settings.store.klipyApiKey?.trim();
@@ -233,8 +392,11 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                     console.warn("[GifProvider] Klipy requires an API key");
                     return [];
                 }
-                const res = await fetch(`https://api.klipy.co/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`);
-                return transformKlipyToDiscord(await res.json());
+                // Klipy: API key goes in URL path
+                const data = await safeFetch(
+                    `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}`
+                );
+                return transformKlipyToDiscord(data);
             }
             default: return [];
         }
@@ -244,41 +406,54 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
     }
 }
 
-// Get trending GIFs from provider (sorted by views for Serika)
 async function trendingFromProvider(limit: number = 50): Promise<DiscordGif[]> {
     const provider = settings.store.provider;
-    if (provider === "tenor") return [];
 
     try {
         switch (provider) {
+            case "tenor_web": {
+                const data = await safeFetch(
+                    `${TENOR_WEB_BASE}/featured?key=${TENOR_WEB_API_KEY}&client_key=${TENOR_WEB_CLIENT_KEY}&limit=${limit}&contentfilter=low`
+                );
+                return transformTenorWebToDiscord(data);
+            }
             case "giphy": {
                 const apiKey = settings.store.giphyApiKey?.trim();
                 if (!apiKey) return [];
-                const res = await fetch(`https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`);
-                return transformGiphyToDiscord(await res.json());
+                const data = await safeFetch(
+                    `https://api.giphy.com/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`
+                );
+                return transformGiphyToDiscord(data);
             }
             case "serika": {
                 const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
                 const apiKey = settings.store.serikaApiKey?.trim();
                 const headers: Record<string, string> = {};
                 if (apiKey) headers["X-API-Key"] = apiKey;
-                // Use sort=trending for actual trending, or sort=views for most viewed
-                const res = await fetch(`${baseUrl}/api/gifs?sort=trending&limit=${limit}`, { headers });
-                return transformSerikaToDiscord(await res.json());
+                const data = await safeFetch(
+                    `${baseUrl}/api/gifs?sort=trending&limit=${limit}`,
+                    { headers }
+                );
+                return transformSerikaToDiscord(data);
             }
             case "imgur": {
                 const clientId = settings.store.imgurClientId?.trim();
                 if (!clientId) return [];
-                const res = await fetch(`https://api.imgur.com/3/gallery/hot/viral/0`, {
-                    headers: { Authorization: `Client-ID ${clientId}` }
-                });
-                return transformImgurToDiscord(await res.json()).slice(0, limit);
+                // Imgur viral gallery (trending animated content)
+                const data = await safeFetch(
+                    `https://api.imgur.com/3/gallery/hot/viral/0`,
+                    { headers: { Authorization: `Client-ID ${clientId}` } }
+                );
+                return transformImgurToDiscord(data).slice(0, limit);
             }
             case "klipy": {
                 const apiKey = settings.store.klipyApiKey?.trim();
                 if (!apiKey) return [];
-                const res = await fetch(`https://api.klipy.co/v1/gifs/trending?limit=${limit}&api_key=${apiKey}`);
-                return transformKlipyToDiscord(await res.json());
+                // Klipy: API key goes in URL path
+                const data = await safeFetch(
+                    `https://api.klipy.com/api/v1/${apiKey}/gifs/trending?limit=${limit}`
+                );
+                return transformKlipyToDiscord(data);
             }
             default: return [];
         }
@@ -288,9 +463,11 @@ async function trendingFromProvider(limit: number = 50): Promise<DiscordGif[]> {
     }
 }
 
+// ─── Plugin definition ──────────────────────────────────────────────────────
+
 export default definePlugin({
     name: "GifProvider",
-    description: "Switch between different GIF providers (Tenor, Giphy, Klipy, Serika GIFs, Imgur)",
+    description: "Switch between different GIF providers (Tenor Web, Giphy, Klipy, Serika GIFs, Imgur)",
     authors: [Devs.Ven],
     settings,
 
@@ -299,40 +476,53 @@ export default definePlugin({
     trendingGifs: trendingFromProvider,
 
     originalGet: null as any,
+    _stopped: false,
 
     start() {
+        this._stopped = false;
+        // Reset category cache when switching providers
+        categoriesCache = null;
+        categoriesCacheTime = 0;
+
         console.log("[GifProvider] Started with provider:", settings.store.provider);
-        
+
         // Store original RestAPI.get
         this.originalGet = RestAPI.get.bind(RestAPI);
 
         // Proxy RestAPI.get to intercept GIF requests
         const self = this;
-        RestAPI.get = function(options: any) {
+        RestAPI.get = function (options: any) {
+            // Guard: if plugin was stopped, don't intercept
+            if (self._stopped) {
+                return self.originalGet(options);
+            }
+
             const url = options?.url || "";
 
-            // Check if this is a GIF search or trending request
-            if (settings.store.provider !== "tenor") {
+            try {
+                // Intercept GIF search
                 if (url.includes("/gifs/search") || url.includes("gifs/search")) {
                     const query = options?.query?.q || "";
-                    console.log("[GifProvider] Intercepted search:", query, url);
+                    console.log("[GifProvider] Intercepted search:", query);
                     return self.handleSearch(query);
                 }
 
                 // /gifs/trending-gifs returns just an array
                 if (url.includes("/gifs/trending-gifs") || url.includes("gifs/trending-gifs")) {
-                    console.log("[GifProvider] Intercepted trending-gifs:", url);
+                    console.log("[GifProvider] Intercepted trending-gifs");
                     return self.handleTrendingGifs();
                 }
 
                 // /gifs/trending returns { categories: [], gifs: [] }
                 if (url.includes("/gifs/trending") || url.includes("gifs/trending")) {
-                    console.log("[GifProvider] Intercepted trending:", url);
+                    console.log("[GifProvider] Intercepted trending");
                     return self.handleTrending();
                 }
+            } catch (err) {
+                console.error("[GifProvider] Interception error:", err);
             }
 
-            // Fall through to original
+            // Fall through to original for non-GIF requests
             return self.originalGet(options);
         };
 
@@ -340,9 +530,9 @@ export default definePlugin({
         (window as any).GifProvider = {
             search: searchFromProvider,
             trending: trendingFromProvider,
-            categories: fetchSerikaCategories,
+            categories: fetchCategories,
             settings: settings.store,
-            plugin: this
+            plugin: this,
         };
         console.log("[GifProvider] Debug: Use window.GifProvider.search('cats') to test");
     },
@@ -351,52 +541,48 @@ export default definePlugin({
         try {
             const gifs = await searchFromProvider(query, 50);
             console.log("[GifProvider] Search results:", gifs.length);
-            if (gifs.length > 0) {
-                return { body: gifs };
-            }
+            return { body: gifs };
         } catch (err) {
-            console.error("[GifProvider] Search error:", err);
+            console.error("[GifProvider] handleSearch error:", err);
+            return { body: [] };
         }
-        return this.originalGet({ url: "/gifs/search", query: { q: query } });
     },
 
     async handleTrending(): Promise<any> {
         try {
-            // Fetch both categories and trending GIFs
             const [categories, gifs] = await Promise.all([
-                settings.store.provider === "serika" ? fetchSerikaCategories() : Promise.resolve([]),
-                trendingFromProvider(50)
+                fetchCategories(),
+                trendingFromProvider(50),
             ]);
-            
+
             console.log("[GifProvider] Trending results:", gifs.length, "categories:", categories.length);
-            
-            if (gifs.length > 0) {
-                return { body: { categories: categories, gifs: gifs } };
-            }
+            return { body: { categories: categories, gifs: gifs } };
         } catch (err) {
-            console.error("[GifProvider] Trending error:", err);
+            console.error("[GifProvider] handleTrending error:", err);
+            return { body: { categories: [], gifs: [] } };
         }
-        return this.originalGet({ url: "/gifs/trending" });
     },
 
     async handleTrendingGifs(): Promise<any> {
         try {
             const gifs = await trendingFromProvider(50);
             console.log("[GifProvider] TrendingGifs results:", gifs.length);
-            if (gifs.length > 0) {
-                return { body: gifs };
-            }
+            return { body: gifs };
         } catch (err) {
-            console.error("[GifProvider] TrendingGifs error:", err);
+            console.error("[GifProvider] handleTrendingGifs error:", err);
+            return { body: [] };
         }
-        return this.originalGet({ url: "/gifs/trending-gifs" });
     },
 
     stop() {
         console.log("[GifProvider] Stopped");
+        this._stopped = true;
         if (this.originalGet) {
             RestAPI.get = this.originalGet;
         }
+        // Clear cache on stop
+        categoriesCache = null;
+        categoriesCacheTime = 0;
         delete (window as any).GifProvider;
-    }
+    },
 });

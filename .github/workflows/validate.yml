@@ -1,17 +1,18 @@
-name: Build & Validate Plugin
+name: Build, Validate & Release Plugin
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  release:
-    types: [created]
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout plugin
         uses: actions/checkout@v4
@@ -46,7 +47,7 @@ jobs:
       - name: Build Vencord with plugin
         working-directory: vencord
         run: pnpm build
-        
+
       - name: Validate build success
         run: |
           if [ -d "vencord/dist" ]; then
@@ -79,10 +80,47 @@ jobs:
           name: GifProvider-plugin-zip
           path: GifProvider-plugin.zip
 
-      - name: Upload to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v1
+      # ── Auto-release on push to main ──
+      - name: Read version from package.json
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: version
+        run: |
+          VERSION=$(node -p "require('./plugin/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "📦 Version: $VERSION"
+
+      - name: Check if tag already exists
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tag_check
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "⏭️ Tag $TAG already exists, skipping release"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "🏷️ Tag $TAG is new, will create release"
+          fi
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tag_check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: GifProvider ${{ steps.version.outputs.tag }}
+          body: |
+            ## GifProvider ${{ steps.version.outputs.tag }}
+
+            ### Installation
+            1. Download `GifProvider-plugin.zip` below
+            2. Extract the `GifProvider` folder into your Vencord `src/userplugins/` directory
+            3. Rebuild Vencord with `pnpm build`
+            4. Restart Discord
+
+            ---
+            *Auto-generated release from commit ${{ github.sha }}*
           files: GifProvider-plugin.zip
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

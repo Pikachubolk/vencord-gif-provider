@@ -20,19 +20,23 @@
 
 - 🔄 **Switch GIF providers** - Choose from 5 different GIF services
 - ⚡ **Instant switching** - No restart required, changes apply immediately
+- 🌐 **Tenor Web** - Uses Tenor's web interface directly — no API key needed
 - 🏠 **Self-hosted support** - Use your own Serika GIFs instance
 - 🔒 **API key support** - Configure private instances with authentication
 - 🎨 **Clean integration** - Seamlessly replaces Discord's default GIF picker
+- 🛡️ **Crash-proof** - Robust error handling ensures Discord never crashes
 
 ## 🎯 Supported Providers
 
 | Provider | Description | API Key | Get Key |
 |----------|-------------|---------|---------|
-| **Tenor** | Discord's default provider | ❌ Not required | Built-in |
+| **Tenor (Web)** ⭐ | Tenor via web interface — default, works out of the box | ❌ Not required | Built-in |
 | **Giphy** | World's largest GIF library | ✅ Required | [developers.giphy.com](https://developers.giphy.com) |
 | **Klipy** | Modern GIF platform | ✅ Required | [klipy.co/developers](https://klipy.co/developers) |
 | **Serika GIFs** | Self-hosted GIF library | ❌ Optional | Bypasses rate limits |
 | **Imgur** | Popular image/GIF hosting | ✅ Required | [api.imgur.com](https://api.imgur.com) |
+
+> **Note:** The Tenor API was shut down on June 30, 2026. This plugin uses Tenor's **web interface** directly (the same way tenor.com works in your browser), so it still works perfectly without any API key.
 
 ## 📦 Installation
 
@@ -40,7 +44,7 @@
 
 > ⚠️ **Note:** Custom plugins require building Vencord from source. Prebuilt Vencord versions don't support external plugins.
 
-1. **Download** the latest plugin from [GitHub Actions](https://github.com/Pikachubolk/vencord-gif-provider/actions) (click the latest run → Artifacts → GifProvider-plugin)
+1. **Download** the latest release from [Releases](https://github.com/Pikachubolk/vencord-gif-provider/releases) (download `GifProvider-plugin.zip`)
 
 2. **Follow the build-from-source instructions below** to install it
 
@@ -99,7 +103,7 @@ Open **Vencord Settings** → **Plugins** → **GifProvider**
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Provider** | Select your preferred GIF provider | Tenor |
+| **Provider** | Select your preferred GIF provider | Tenor (Web) |
 | **Giphy API Key** | Your Giphy API key | - |
 | **Klipy API Key** | Your Klipy API key | - |
 | **Imgur Client ID** | Your Imgur Client ID | - |
@@ -136,7 +140,7 @@ Serika GIFs is a self-hosted GIF platform that works **without an API key**!
 ## 🎮 Usage
 
 1. **Enable the plugin** in Vencord settings
-2. **Select your provider** from the dropdown menu
+2. **Select your provider** from the dropdown menu (default: Tenor Web)
 3. **Open Discord's GIF picker** (click the GIF button in chat)
 4. **Search or browse** - GIFs now come from your selected provider!
 
@@ -186,14 +190,20 @@ Open the browser console (Ctrl+Shift+I) and look for `[GifProvider]` logs:
 
 ```javascript
 // Test search manually
-Vencord.Plugins.plugins.GifProvider.searchGifs("cats", 10)
+window.GifProvider.search("cats", 10)
+
+// Test trending
+window.GifProvider.trending(10)
+
+// Check current settings
+window.GifProvider.settings
 ```
 
 ## 📝 API Notes
 
 | Provider | Notes |
 |----------|-------|
-| **Tenor** | Uses Discord's built-in API key - no setup needed |
+| **Tenor (Web)** | Uses Tenor's web frontend key — no setup, works out of the box |
 | **Giphy** | Requires your own API key from developers.giphy.com |
 | **Klipy** | Requires your own API key from klipy.co |
 | **Serika** | Works without API key! Optional key bypasses rate limits |
