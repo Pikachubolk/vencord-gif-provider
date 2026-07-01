@@ -133,12 +133,6 @@ function handleProviderChange(newValue: string) {
     try {
         if (FluxDispatcher) {
             FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
-            FluxDispatcher.dispatch({
-                type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
-                gifs: [],
-                categories: [],
-                trending: { gifs: [], categories: [] }
-            });
             FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
             FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
         }
@@ -164,12 +158,6 @@ function handleProviderChange(newValue: string) {
         }
 
         if (FluxDispatcher) {
-            FluxDispatcher.dispatch({
-                type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
-                gifs: gifs,
-                categories: categories,
-                trending: { gifs, categories }
-            });
             FluxDispatcher.dispatch({
                 type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS",
                 categories
@@ -497,7 +485,7 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
             if (gif) {
                 return {
                     name: tag.name,
-                    src: gif.thumbnailUrl || gif.webmUrl || gif.url?.replace(/\.gif$/i, ".webm") || "",
+                    src: gif.thumbnailUrl || gif.url || "",
                 };
             }
         } catch { /* ignore */ }
@@ -540,11 +528,11 @@ async function fetchKlipyCategories(): Promise<DiscordCategory[]> {
                 const file = items[0].file || {};
                 const sm = file.sm || {};
                 const hd = file.hd || {};
-                const smMp4 = sm.mp4?.url || sm.webm?.url || sm.gif?.url || hd.gif?.url || "";
-                if (smMp4) {
+                const previewImg = sm.gif?.url || hd.gif?.url || sm.mp4?.url || "";
+                if (previewImg) {
                     return {
                         name: name.charAt(0).toUpperCase() + name.slice(1),
-                        src: smMp4,
+                        src: previewImg,
                     };
                 }
             }
@@ -581,7 +569,7 @@ async function fetchGiphyCategories(): Promise<DiscordCategory[]> {
         const gif = item.gif || {};
         const images = gif.images || {};
         const fixedHeight = images.fixed_height || images.original || {};
-        const previewUrl = fixedHeight.mp4 || fixedHeight.url || "";
+        const previewUrl = fixedHeight.url || images.original?.url || images.fixed_height_small?.url || "";
         if (previewUrl && item.name) {
             categories.push({
                 name: item.name,
