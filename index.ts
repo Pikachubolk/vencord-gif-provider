@@ -372,6 +372,85 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
     return categories;
 }
 
+const POPULAR_CATEGORIES = [
+    "funny", "excited", "happy", "sad", "love", "laughing", "angry", "surprised", 
+    "yes", "no", "hello", "bye", "crying", "dancing", "facepalm", "shrug", 
+    "smug", "wink", "scared", "mind blown"
+];
+
+async function fetchKlipyCategories(): Promise<DiscordCategory[]> {
+    if (categoriesCache && Date.now() - categoriesCacheTime < CACHE_DURATION) {
+        return categoriesCache;
+    }
+
+    const apiKey = settings.store.klipyApiKey?.trim();
+    if (!apiKey) return [];
+
+    const categories: DiscordCategory[] = [];
+    const tagPromises = POPULAR_CATEGORIES.map(async (name) => {
+        try {
+            const data = await safeFetch(
+                `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${encodeURIComponent(name)}&limit=1`
+            );
+            const items = data?.data?.data || data?.data || data?.results || [];
+            if (items[0]) {
+                const file = items[0].file || {};
+                const sm = file.sm || {};
+                const hd = file.hd || {};
+                const smMp4 = sm.mp4?.url || sm.webm?.url || sm.gif?.url || hd.gif?.url || "";
+                if (smMp4) {
+                    return {
+                        name: name.charAt(0).toUpperCase() + name.slice(1),
+                        src: smMp4,
+                    };
+                }
+            }
+        } catch { /* ignore */ }
+        return null;
+    });
+
+    const results = await Promise.all(tagPromises);
+    for (const cat of results) {
+        if (cat && cat.src) categories.push(cat);
+    }
+
+    categoriesCache = categories;
+    categoriesCacheTime = Date.now();
+    return categories;
+}
+
+async function fetchGiphyCategories(): Promise<DiscordCategory[]> {
+    if (categoriesCache && Date.now() - categoriesCacheTime < CACHE_DURATION) {
+        return categoriesCache;
+    }
+
+    const apiKey = settings.store.giphyApiKey?.trim();
+    if (!apiKey) return [];
+
+    const data = await safeFetch(
+        `https://api.giphy.com/v1/gifs/categories?api_key=${apiKey}`
+    );
+    if (!data?.data || !Array.isArray(data.data)) return [];
+
+    const categories: DiscordCategory[] = [];
+    for (const item of data.data) {
+        const gif = item.gif || {};
+        const images = gif.images || {};
+        const fixedHeight = images.fixed_height || images.original || {};
+        const previewUrl = fixedHeight.mp4 || fixedHeight.url || "";
+        if (previewUrl && item.name) {
+            categories.push({
+                name: item.name,
+                src: previewUrl,
+            });
+        }
+    }
+
+    categoriesCache = categories;
+    categoriesCacheTime = Date.now();
+    return categories;
+}
+
 async function fetchCategories(): Promise<DiscordCategory[]> {
     const provider = settings.store.provider;
     if (cachedProvider !== provider) {
@@ -383,6 +462,8 @@ async function fetchCategories(): Promise<DiscordCategory[]> {
         switch (provider) {
             case "tenor_web": return await fetchTenorWebCategories();
             case "serika": return await fetchSerikaCategories();
+            case "klipy": return await fetchKlipyCategories();
+            case "giphy": return await fetchGiphyCategories();
             default: return [];
         }
     } catch (err) {
