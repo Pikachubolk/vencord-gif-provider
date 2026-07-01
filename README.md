@@ -163,21 +163,61 @@ pnpm inject
 
 ---
 
-#### Option D: Manual copy (no git clone)
+#### Option D: Equicord (Vencord fork)
 
-If you already have Vencord set up and just want to add the plugin file:
+> Equicord is a community fork of Vencord. If you use Equicord, follow these steps instead.
+
+**Step 1: Clone and build Equicord**
+
+```bash
+git clone https://github.com/Equicord/Equicord
+cd Equicord
+
+# Install dependencies
+pnpm install --no-frozen-lockfile
+
+# Build Equicord
+pnpm build
+```
+
+**Step 2: Add the plugin**
+
+```bash
+# Create the userplugins folder (if it doesn't exist)
+mkdir -p src/userplugins
+
+# Clone this plugin into the userplugins folder
+git clone https://github.com/Pikachubolk/vencord-gif-provider.git src/userplugins/GifProvider
+
+# Rebuild Equicord with the plugin
+pnpm build
+```
+
+**Step 3: Inject into Discord**
+
+```bash
+pnpm inject
+```
+
+**Step 4: Restart Discord** and enable the plugin in Equicord Settings → Plugins.
+
+---
+
+#### Option E: Manual copy (no git clone)
+
+If you already have Vencord or Equicord set up and just want to add the plugin file:
 
 1. Download [`index.ts`](index.ts) from this repository
-2. Place it in `Vencord/src/plugins/gifProvider/index.ts` (or `Vencord/src/userplugins/GifProvider/index.ts`)
-3. Run `pnpm build` in the Vencord directory
-4. Copy the built files to your Vesktop/Vencord config directory
+2. Place it in `Vencord/src/plugins/gifProvider/index.ts` (or `Vencord/src/userplugins/GifProvider/index.ts` / `Equicord/src/userplugins/GifProvider/index.ts`)
+3. Run `pnpm build` in the Vencord/Equicord directory
+4. Copy the built files to your Vesktop/Vencord/Equicord config directory
 5. Restart your client
 
 ---
 
 ## ⚙️ Configuration
 
-Open **Vencord Settings** → **Plugins** → **GifProvider**
+Open **Vencord/Equicord Settings** → **Plugins** → **GifProvider**
 
 | Setting | Description | Default |
 |---------|-------------|---------|
@@ -213,7 +253,7 @@ You only need API keys for the providers you want to use. **Tenor Web and Serika
 
 Serika GIFs is a self-hosted GIF platform that works **without an API key**!
 
-1. Select "Serika GIFs" as your provider in Vencord settings
+1. Select "Serika GIFs" as your provider in Vencord/Equicord settings
 2. Enter your instance URL (default: `https://gifs.serika.dev`)
 3. (Optional) Add an API key to bypass rate limits
 
@@ -223,8 +263,8 @@ Serika GIFs is a self-hosted GIF platform that works **without an API key**!
 
 ### Basic Usage
 
-1. **Enable the plugin** in Vencord Settings → Plugins → GifProvider
-2. **Select your provider** from the dropdown in Vencord settings (default: Tenor Web)
+1. **Enable the plugin** in Vencord/Equicord Settings → Plugins → GifProvider
+2. **Select your provider** from the dropdown in Vencord/Equicord settings (default: Tenor Web)
 3. **Open Discord's GIF picker** — click the GIF button in the chat box
 4. **Search or browse** — GIFs now come from your selected provider!
 5. **Click a GIF** to send it in chat — the appropriate URL is pasted automatically
@@ -233,7 +273,7 @@ Serika GIFs is a self-hosted GIF platform that works **without an API key**!
 
 You can switch providers **without restarting Discord** in two ways:
 
-- **Method 1: Vencord Settings** — Go to Settings → Vencord → Plugins → GifProvider → Provider dropdown
+- **Method 1: Vencord/Equicord Settings** — Go to Settings → Vencord/Equicord → Plugins → GifProvider → Provider dropdown
 - **Method 2: GIF Picker Dropdown** — A small dropdown appears right next to the search bar in the GIF picker. Use it to switch providers instantly!
 
 When you switch, the GIF picker will:
@@ -267,11 +307,11 @@ All providers use **WebM or MP4 video** for in-picker previews. This means:
 1. **Check your API key** — If using Giphy/Klipy/Imgur, make sure the key is correct
 2. **Check the console** — Open DevTools (Ctrl+Shift+I) and look for `[GifProvider]` errors
 3. **Try Tenor Web** — Switch to Tenor (Web) which requires no API key. If it works, the issue is with your API key for the other provider
-4. **Rebuild Vencord** — Make sure you rebuilt after adding the plugin: `pnpm build`
+4. **Rebuild Vencord/Equicord** — Make sure you rebuilt after adding the plugin: `pnpm build`
 
 ### CSP errors ("Content Security Policy directive")
 
-If you see errors like `Loading media from '...' violates the following Content Security Policy directive`, this means the CSP whitelist needs updating. This is already handled in the plugin's Vencord integration:
+If you see errors like `Loading media from '...' violates the following Content Security Policy directive`, this means the CSP whitelist needs updating. This is already handled in the plugin's Vencord/Equicord integration:
 
 - All provider domains are whitelisted in `Vencord/src/main/csp/index.ts` for both `img-src` and `media-src`
 - The plugin also dynamically requests CSP overrides at runtime via `VencordNative.csp`
@@ -294,10 +334,10 @@ If old GIFs persist when switching providers:
 - This can happen if Vesktop is force-killed (`kill -9`) instead of closed gracefully, which can corrupt the session database
 - Always close Vesktop normally (File → Quit or Ctrl+Q)
 
-### Plugin not showing up in Vencord settings
+### Plugin not showing up in Vencord/Equicord settings
 
 1. Make sure the plugin file is at the correct path (`src/userplugins/GifProvider/index.ts` or `src/plugins/gifProvider/index.ts`)
-2. Run `pnpm build` again in the Vencord directory
+2. Run `pnpm build` again in the Vencord/Equicord directory
 3. Copy ALL `vencordDesktop*` files to the Vesktop config directory
 4. Restart Vesktop completely
 
@@ -328,7 +368,7 @@ The plugin works by intercepting Discord's internal GIF API calls:
 ### Building
 
 ```bash
-# In your Vencord directory
+# In your Vencord/Equicord directory
 pnpm build
 
 # For development with hot reload
