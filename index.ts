@@ -1003,6 +1003,81 @@ function stopPlaceholderObserver() {
     document.querySelectorAll(".gif-provider-dropdown").forEach(el => el.remove());
 }
 
+// ─── Category Click Handler ──────────────────────────────────────────────────
+
+let categoryClickListener: ((e: MouseEvent) => void) | null = null;
+
+function setupCategoryClickListener() {
+    if (categoryClickListener) return;
+
+    categoryClickListener = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (!target) return;
+
+        // Find the category result element
+        const result = target.closest('[class*="result_"]');
+        if (!result) return;
+
+        // Must be inside the GIF picker
+        const gifPicker = result.closest('#gif-picker-tab-panel') || result.closest('[class*="expressionPicker"]');
+        if (!gifPicker) return;
+
+        // Skip Favorites (has categoryFadeBlurple class)
+        if (result.querySelector('[class*="categoryFadeBlurple"]')) return;
+
+        // Must be a category tile (has categoryFade but not Blurple)
+        const fade = result.querySelector('[class*="categoryFade"]');
+        if (!fade || fade.className.includes("Blurple")) return;
+
+        const categoryName = result.getAttribute('aria-label');
+        if (!categoryName || categoryName === 'Favorites') return;
+
+        // Prevent React's broken click handler from firing
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Find the search input and set its value for visual feedback
+        const input = gifPicker.querySelector('input');
+        if (input) {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+            )?.set;
+            if (nativeInputValueSetter) {
+                nativeInputValueSetter.call(input, categoryName);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        }
+
+        // Directly search and dispatch results to force the view to switch
+        searchFromProvider(categoryName, 50).then(gifs => {
+            if (FluxDispatcher) {
+                FluxDispatcher.dispatch({
+                    type: "GIF_PICKER_SEARCH_SUCCESS",
+                    query: categoryName,
+                    gifs
+                });
+            }
+            // Also emit change on the store to refresh UI
+            const store = getGifPickerSearchStore();
+            if (store) {
+                try { store.emitChange(); } catch (err) {}
+            }
+        }).catch(err => {
+            console.error("[GifProvider] Category click search error:", err);
+        });
+    };
+
+    // Use capturing phase to intercept before React's handler
+    document.addEventListener('click', categoryClickListener, true);
+}
+
+function removeCategoryClickListener() {
+    if (categoryClickListener) {
+        document.removeEventListener('click', categoryClickListener, true);
+        categoryClickListener = null;
+    }
+}
+
 // ─── Search Store Getter Overrides ──────────────────────────────────────────
 
 function ensureStorePatched() {
@@ -1114,6 +1189,9 @@ export default definePlugin({
 
         // Start watching for search input to patch its placeholder
         startPlaceholderObserver();
+
+        // Set up category click listener for trending/collections categories
+        setupCategoryClickListener();
 
         // Patch store getters
         ensureStorePatched();
@@ -1238,6 +1316,9 @@ export default definePlugin({
 
         // Stop placeholder observer
         stopPlaceholderObserver();
+
+        // Remove category click listener
+        removeCategoryClickListener();
 
         // Clear cache on stop
         categoriesCache = null;
