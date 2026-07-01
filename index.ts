@@ -7,7 +7,6 @@
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { findStore } from "@webpack";
 import { RestAPI, FluxDispatcher, Flux } from "@webpack/common";
 
 // Discord GIF format interface
@@ -35,15 +34,33 @@ let trendingGifsCacheTime = 0;
 let cachedProvider: string | null = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+function deduplicateGifs(gifs: DiscordGif[]): DiscordGif[] {
+    const seen = new Set<string>();
+    const result: DiscordGif[] = [];
+    for (const gif of gifs) {
+        const key = gif.id || gif.url || gif.src;
+        if (key && !seen.has(key)) {
+            seen.add(key);
+            result.push(gif);
+        }
+    }
+    return result;
+}
+
+function deduplicateCategories(cats: DiscordCategory[]): DiscordCategory[] {
+    const seen = new Set<string>();
+    const result: DiscordCategory[] = [];
+    for (const cat of cats) {
+        const key = cat.name?.toLowerCase() || cat.src;
+        if (key && !seen.has(key)) {
+            seen.add(key);
+            result.push(cat);
+        }
+    }
+    return result;
+}
+
 function getGifPickerSearchStore() {
-    try {
-        let store = findStore("GIFPickerSearchStore") as any;
-        if (store) return store;
-    } catch {}
-    try {
-        let store = findStore("GifPickerSearchStore") as any;
-        if (store) return store;
-    } catch {}
     try {
         const allStores = Flux.Store.getAll();
         for (const store of allStores) {
@@ -116,7 +133,12 @@ function handleProviderChange(newValue: string) {
     try {
         if (FluxDispatcher) {
             FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
-            FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", gifs: [], categories: [] });
+            FluxDispatcher.dispatch({
+                type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
+                gifs: [],
+                categories: [],
+                trending: { gifs: [], categories: [] }
+            });
             FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
             FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
         }
@@ -146,11 +168,11 @@ function handleProviderChange(newValue: string) {
                 type: "GIF_PICKER_TRENDING_FETCH_SUCCESS",
                 gifs: gifs,
                 categories: categories,
-                trending: { gifs: gifs, categories: categories }
+                trending: { gifs, categories }
             });
             FluxDispatcher.dispatch({
                 type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS",
-                categories: categories
+                categories
             });
         }
 
@@ -445,7 +467,7 @@ async function fetchTenorWebCategories(): Promise<DiscordCategory[]> {
     );
     if (!data) return [];
 
-    const categories = transformTenorCategoriesToDiscord(data);
+    const categories = deduplicateCategories(transformTenorCategoriesToDiscord(data));
     categoriesCache = categories;
     categoriesCacheTime = Date.now();
     return categories;
@@ -487,9 +509,10 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
         if (cat && cat.src) categories.push(cat);
     }
 
-    categoriesCache = categories;
+    const deduped = deduplicateCategories(categories);
+    categoriesCache = deduped;
     categoriesCacheTime = Date.now();
-    return categories;
+    return deduped;
 }
 
 const POPULAR_CATEGORIES = [
@@ -534,9 +557,10 @@ async function fetchKlipyCategories(): Promise<DiscordCategory[]> {
         if (cat && cat.src) categories.push(cat);
     }
 
-    categoriesCache = categories;
+    const deduped = deduplicateCategories(categories);
+    categoriesCache = deduped;
     categoriesCacheTime = Date.now();
-    return categories;
+    return deduped;
 }
 
 async function fetchGiphyCategories(): Promise<DiscordCategory[]> {
@@ -566,9 +590,10 @@ async function fetchGiphyCategories(): Promise<DiscordCategory[]> {
         }
     }
 
-    categoriesCache = categories;
+    const deduped = deduplicateCategories(categories);
+    categoriesCache = deduped;
     categoriesCacheTime = Date.now();
-    return categories;
+    return deduped;
 }
 
 async function fetchCategories(providerOverride?: string): Promise<DiscordCategory[]> {
@@ -620,7 +645,7 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                 const data = await safeFetch(
                     `${TENOR_WEB_BASE}/search?key=${TENOR_WEB_API_KEY}&client_key=${TENOR_WEB_CLIENT_KEY}&q=${encodeURIComponent(query)}&limit=${limit}&contentfilter=low`
                 );
-                return transformTenorWebToDiscord(data);
+                return deduplicateGifs(transformTenorWebToDiscord(data));
             }
             case "giphy": {
                 const apiKey = settings.store.giphyApiKey?.trim();
@@ -631,7 +656,7 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                 const data = await safeFetch(
                     `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}&api_key=${apiKey}`
                 );
-                return transformGiphyToDiscord(data);
+                return deduplicateGifs(transformGiphyToDiscord(data));
             }
             case "serika": {
                 const baseUrl = settings.store.serikaInstance.replace(/\/$/, "");
@@ -642,7 +667,7 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                     `${baseUrl}/api/gifs?search=${encodeURIComponent(query)}&limit=${limit}`,
                     { headers }
                 );
-                return transformSerikaToDiscord(data);
+                return deduplicateGifs(transformSerikaToDiscord(data));
             }
             case "imgur": {
                 const clientId = settings.store.imgurClientId?.trim();
@@ -655,7 +680,7 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                     `https://api.imgur.com/3/gallery/search?q=${encodeURIComponent(query)}&q_type=anigif`,
                     { headers: { Authorization: `Client-ID ${clientId}` } }
                 );
-                return transformImgurToDiscord(data).slice(0, limit);
+                return deduplicateGifs(transformImgurToDiscord(data).slice(0, limit));
             }
             case "klipy": {
                 const apiKey = settings.store.klipyApiKey?.trim();
@@ -667,7 +692,7 @@ async function searchFromProvider(query: string, limit: number = 50): Promise<Di
                 const data = await safeFetch(
                     `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${encodeURIComponent(query)}&limit=${limit}`
                 );
-                return transformKlipyToDiscord(data);
+                return deduplicateGifs(transformKlipyToDiscord(data));
             }
             default: return [];
         }
@@ -750,6 +775,7 @@ async function trendingFromProvider(limit: number = 50, providerOverride?: strin
                 gifs = [];
         }
 
+        gifs = deduplicateGifs(gifs);
         if (useCache) {
             trendingGifsCache = gifs;
             trendingGifsCacheTime = Date.now();
@@ -782,6 +808,23 @@ function getSearchPlaceholder(provider: string): string {
     return `${verb} ${name}`;
 }
 
+function isProviderConfigured(provider: string): boolean {
+    switch (provider) {
+        case "tenor_web":
+            return true;
+        case "serika":
+            return true;
+        case "giphy":
+            return !!settings.store.giphyApiKey?.trim();
+        case "klipy":
+            return !!settings.store.klipyApiKey?.trim();
+        case "imgur":
+            return !!settings.store.imgurClientId?.trim();
+        default:
+            return false;
+    }
+}
+
 function injectDropdown(container: Element) {
     const wrapper = document.createElement("div");
     wrapper.className = "gif-provider-dropdown-wrapper";
@@ -794,21 +837,27 @@ function injectDropdown(container: Element) {
     select.className = "gif-provider-dropdown";
     select.title = "Switch GIF Provider";
 
-    // Compact styling that blends into Discord's UI
-    select.style.padding = "4px 8px";
+    // Discord-style select using CSS variables
+    select.style.padding = "4px 28px 4px 8px";
     select.style.borderRadius = "4px";
     select.style.border = "1px solid var(--border-medium, #1e1f22)";
     select.style.backgroundColor = "var(--input-background, #1e1f22)";
     select.style.color = "var(--text-normal, #dbdee1)";
-    select.style.fontSize = "12px";
+    select.style.fontSize = "14px";
     select.style.fontWeight = "500";
     select.style.cursor = "pointer";
     select.style.outline = "none";
     select.style.fontFamily = "var(--font-primary, sans-serif)";
-    select.style.appearance = "auto";
-    select.style.minWidth = "80px";
+    select.style.appearance = "none";
+    select.style.minWidth = "90px";
+    select.style.height = "32px";
+    select.style.lineHeight = "1";
+    select.style.backgroundImage = "url('data:image/svg+xml,%3Csvg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" fill=\"none\" viewBox=\"0 0 24 24\"%3E%3Cpath fill=\"var(--text-muted, %23949ba4)\" d=\"M9.17 12.17a1 1 0 0 1 1.41 0L12 13.59l1.42-1.42a1 1 0 1 1 1.41 1.41l-2.12 2.12a1 1 0 0 1-1.42 0L9.17 13.58a1 1 0 0 1 0-1.41Z\"/%3E%3C/svg%3E')";
+    select.style.backgroundRepeat = "no-repeat";
+    select.style.backgroundPosition = "right 6px center";
+    select.style.backgroundSize = "16px";
 
-    const providers = [
+    const allProviders = [
         { label: "Tenor", value: "tenor_web" },
         { label: "Giphy", value: "giphy" },
         { label: "Klipy", value: "klipy" },
@@ -816,18 +865,23 @@ function injectDropdown(container: Element) {
         { label: "Imgur", value: "imgur" },
     ];
 
+    // Only show configured providers, but always include the currently selected one
+    const currentProvider = settings.store.provider;
+    const providers = allProviders.filter(p =>
+        isProviderConfigured(p.value) || p.value === currentProvider
+    );
+
     providers.forEach(p => {
         const opt = document.createElement("option");
         opt.value = p.value;
         opt.textContent = p.label;
-        opt.selected = settings.store.provider === p.value;
+        opt.selected = currentProvider === p.value;
         select.appendChild(opt);
     });
 
     select.addEventListener("change", () => {
         const newValue = select.value;
         settings.store.provider = newValue;
-        handleProviderChange(newValue);
     });
 
     wrapper.appendChild(select);
