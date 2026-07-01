@@ -119,7 +119,7 @@ function setStoreState(store: any, categories: any[], gifs: any[]) {
     }
 }
 
-function handleProviderChange(newValue: string) {
+function handleProviderChange(newValue: string, currentQuery?: string) {
     categoriesCache = null;
     categoriesCacheTime = 0;
     trendingGifsCache = null;
@@ -128,6 +128,7 @@ function handleProviderChange(newValue: string) {
     cachedProvider = null;
 
     const store = getGifPickerSearchStore();
+    const hasActiveSearch = !!(currentQuery && currentQuery.trim());
 
     // Clear store state immediately so old content disappears
     setStoreState(store, [], []);
@@ -138,42 +139,82 @@ function handleProviderChange(newValue: string) {
     try {
         if (FluxDispatcher) {
             FluxDispatcher.dispatch({ type: "GIF_PICKER_INITIALIZE" });
-            FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
+            if (!hasActiveSearch) {
+                FluxDispatcher.dispatch({ type: "GIF_PICKER_SEARCH_SUCCESS", query: "", gifs: [] });
+            }
             FluxDispatcher.dispatch({ type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS", categories: [] });
         }
     } catch (e) {
         console.error("[GifProvider] Error clearing GIF picker store:", e);
     }
 
-    // Asynchronously fetch and update cache
-    Promise.all([
-        fetchCategories(newValue),
-        trendingFromProvider(50, newValue)
-    ]).then(([categories, gifs]) => {
-        categoriesCache = categories;
-        categoriesCacheTime = Date.now();
-        trendingGifsCache = gifs;
-        trendingGifsCacheTime = Date.now();
-        cachedProvider = newValue;
+    if (hasActiveSearch) {
+        // Active search: re-search on new provider, also fetch categories/trending in background
+        const searchPromise = searchFromProvider(currentQuery!, 50);
+        const fetchPromise = Promise.all([
+            fetchCategories(newValue),
+            trendingFromProvider(50, newValue)
+        ]);
 
-        // Push new data into store state directly
-        setStoreState(store, categories, gifs);
-        if (store) {
-            try { store.emitChange(); } catch (e) {}
-        }
+        // Search results take priority — dispatch them as soon as ready
+        searchPromise.then(gifs => {
+            if (FluxDispatcher) {
+                FluxDispatcher.dispatch({
+                    type: "GIF_PICKER_SEARCH_SUCCESS",
+                    query: currentQuery!,
+                    gifs
+                });
+            }
+            if (store) {
+                try { store.emitChange(); } catch (e) {}
+            }
+        }).catch(err => {
+            console.error("[GifProvider] Provider switch re-search error:", err);
+        });
 
-        if (FluxDispatcher) {
-            FluxDispatcher.dispatch({
-                type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS",
-                categories
-            });
-        }
+        // Categories/trending fetched in background for when user goes back
+        fetchPromise.then(([categories, gifs]) => {
+            categoriesCache = categories;
+            categoriesCacheTime = Date.now();
+            trendingGifsCache = gifs;
+            trendingGifsCacheTime = Date.now();
+            cachedProvider = newValue;
+            setStoreState(store, categories, gifs);
+            patchPlaceholder();
+        }).catch(err => {
+            console.error("[GifProvider] Error updating cache on provider change:", err);
+        });
+    } else {
+        // No active search: fetch categories and trending as usual
+        Promise.all([
+            fetchCategories(newValue),
+            trendingFromProvider(50, newValue)
+        ]).then(([categories, gifs]) => {
+            categoriesCache = categories;
+            categoriesCacheTime = Date.now();
+            trendingGifsCache = gifs;
+            trendingGifsCacheTime = Date.now();
+            cachedProvider = newValue;
 
-        // Update placeholder and dropdown to reflect new provider
-        patchPlaceholder();
-    }).catch(err => {
-        console.error("[GifProvider] Error updating store on provider change:", err);
-    });
+            // Push new data into store state directly
+            setStoreState(store, categories, gifs);
+            if (store) {
+                try { store.emitChange(); } catch (e) {}
+            }
+
+            if (FluxDispatcher) {
+                FluxDispatcher.dispatch({
+                    type: "GIF_PICKER_CATEGORIES_FETCH_SUCCESS",
+                    categories
+                });
+            }
+
+            // Update placeholder and dropdown to reflect new provider
+            patchPlaceholder();
+        }).catch(err => {
+            console.error("[GifProvider] Error updating store on provider change:", err);
+        });
+    }
 }
 
 // Tenor Web API credentials (same key used by tenor.com's frontend)
@@ -912,26 +953,7 @@ function injectDropdown(container: Element) {
         const input = gifPicker?.querySelector('input');
         const currentQuery = input?.value?.trim() || "";
 
-        handleProviderChange(newValue);
-
-        if (currentQuery) {
-            // Re-search with the same query on the new provider after caches are cleared
-            searchFromProvider(currentQuery, 50).then(gifs => {
-                if (FluxDispatcher) {
-                    FluxDispatcher.dispatch({
-                        type: "GIF_PICKER_SEARCH_SUCCESS",
-                        query: currentQuery,
-                        gifs
-                    });
-                }
-                const store = getGifPickerSearchStore();
-                if (store) {
-                    try { store.emitChange(); } catch (e) {}
-                }
-            }).catch(err => {
-                console.error("[GifProvider] Provider switch re-search error:", err);
-            });
-        }
+        handleProviderChange(newValue, currentQuery || undefined);
     });
 
     wrapper.appendChild(select);
