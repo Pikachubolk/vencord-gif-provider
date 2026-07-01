@@ -26,6 +26,7 @@ interface DiscordGif {
 interface DiscordCategory {
     name: string;
     src: string;
+    searchterm: string;
 }
 
 // Cache for categories and trending gifs
@@ -294,6 +295,7 @@ function transformTenorCategoriesToDiscord(data: any): DiscordCategory[] {
         .map((tag: any) => ({
             name: tag.name.replace(/^#/, ""),
             src: tag.image,
+            searchterm: tag.searchterm || tag.name.replace(/^#/, ""),
         }));
 }
 
@@ -504,6 +506,7 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
                 return {
                     name: tag.name,
                     src: gif.thumbnailUrl || gif.url || "",
+                    searchterm: tag.slug || tag.name,
                 };
             }
         } catch { /* ignore */ }
@@ -551,6 +554,7 @@ async function fetchKlipyCategories(): Promise<DiscordCategory[]> {
                     return {
                         name: name.charAt(0).toUpperCase() + name.slice(1),
                         src: previewImg,
+                        searchterm: name,
                     };
                 }
             }
@@ -592,6 +596,7 @@ async function fetchGiphyCategories(): Promise<DiscordCategory[]> {
             categories.push({
                 name: item.name,
                 src: previewUrl,
+                searchterm: item.name,
             });
         }
     }
@@ -901,6 +906,7 @@ function injectDropdown(container: Element) {
     select.addEventListener("change", () => {
         const newValue = select.value;
         settings.store.provider = newValue;
+        handleProviderChange(newValue);
     });
 
     wrapper.appendChild(select);
