@@ -561,6 +561,40 @@ function transformKlipyToDiscord(data: any): DiscordGif[] {
 
 // ─── Category fetchers ──────────────────────────────────────────────────────
 
+// Fisher-Yates shuffle (returns a new array)
+function shuffle<T>(arr: T[]): T[] {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+interface CoverCandidate {
+    name: string;
+    searchterm: string;
+    srcs: string[];
+}
+
+/**
+ * Assigns a unique cover image to each category so the same GIF never shows up
+ * as the cover for multiple collections. Each category proposes a shuffled list
+ * of candidate images; we pick the first one not already taken, falling back to
+ * its first candidate if every option is already used.
+ */
+function assignUniqueCovers(candidates: CoverCandidate[]): DiscordCategory[] {
+    const used = new Set<string>();
+    const out: DiscordCategory[] = [];
+    for (const c of candidates) {
+        if (!c.srcs.length) continue;
+        const src = c.srcs.find(s => !used.has(s)) ?? c.srcs[0];
+        used.add(src);
+        out.push({ name: c.name, src, searchterm: c.searchterm });
+    }
+    return out;
+}
+
 async function fetchTenorWebCategories(): Promise<DiscordCategory[]> {
     if (categoriesCache && Date.now() - categoriesCacheTime < CACHE_DURATION) {
         return categoriesCache;
@@ -591,30 +625,23 @@ async function fetchSerikaCategories(): Promise<DiscordCategory[]> {
     if (!tagsData) return [];
 
     const tags = tagsData.tags || [];
-    const categories: DiscordCategory[] = [];
 
-    // Fetch sample GIFs for top tags in parallel (fetch a few and pick a random one so previews don't all repeat)
-    const tagPromises = tags.slice(0, 20).map(async (tag: any) => {
+    // Fetch a pool of candidate cover images per tag in parallel, then assign
+    // covers sequentially so no two categories share the same image.
+    const candidatePromises = tags.slice(0, 20).map(async (tag: any) => {
         try {
-            const gifData = await safeFetch(`${baseUrl}/api/gifs?tag=${tag.slug}&limit=5&sort=views`, { headers });
+            const gifData = await safeFetch(`${baseUrl}/api/gifs?tag=${tag.slug}&limit=10&sort=trending`, { headers });
             const gifs = gifData?.gifs || [];
-            if (gifs.length > 0) {
-                // Pick a random GIF from the results, not always the first one
-                const gif = gifs[Math.floor(Math.random() * gifs.length)];
-                return {
-                    name: tag.name,
-                    src: gif.thumbnailUrl || gif.url || "",
-                    searchterm: tag.slug || tag.name,
-                };
-            }
+            const srcs = shuffle(
+                gifs.map((g: any) => g.thumbnailUrl || g.url || "").filter(Boolean)
+            );
+            return { name: tag.name, searchterm: tag.slug || tag.name, srcs };
         } catch { /* ignore */ }
-        return null;
+        return { name: tag.name, searchterm: tag.slug || tag.name, srcs: [] as string[] };
     });
 
-    const results = await Promise.all(tagPromises);
-    for (const cat of results) {
-        if (cat && cat.src) categories.push(cat);
-    }
+    const candidates = await Promise.all(candidatePromises);
+    const categories = assignUniqueCovers(candidates);
 
     const deduped = deduplicateCategories(categories);
     categoriesCache = deduped;
@@ -636,34 +663,32 @@ async function fetchKlipyCategories(): Promise<DiscordCategory[]> {
     const apiKey = settings.store.klipyApiKey?.trim();
     if (!apiKey) return [];
 
-    const categories: DiscordCategory[] = [];
-    const tagPromises = POPULAR_CATEGORIES.map(async (name) => {
+    // Fetch several results per category so each collection can get a distinct cover.
+    const candidatePromises = POPULAR_CATEGORIES.map(async (name) => {
+        const candidate: CoverCandidate = {
+            name: name.charAt(0).toUpperCase() + name.slice(1),
+            searchterm: name,
+            srcs: [],
+        };
         try {
             const data = await safeFetch(
-                `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${encodeURIComponent(name)}&limit=1`
+                `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${encodeURIComponent(name)}&per_page=8`
             );
             const items = data?.data?.data || data?.data || data?.results || [];
-            if (items[0]) {
-                const file = items[0].file || {};
-                const sm = file.sm || {};
-                const hd = file.hd || {};
-                const previewImg = sm.gif?.url || hd.gif?.url || sm.mp4?.url || "";
-                if (previewImg) {
-                    return {
-                        name: name.charAt(0).toUpperCase() + name.slice(1),
-                        src: previewImg,
-                        searchterm: name,
-                    };
-                }
-            }
+            candidate.srcs = shuffle(
+                (Array.isArray(items) ? items : []).map((item: any) => {
+                    const file = item.file || {};
+                    const sm = file.sm || {};
+                    const hd = file.hd || {};
+                    return sm.gif?.url || hd.gif?.url || sm.mp4?.url || "";
+                }).filter(Boolean)
+            );
         } catch { /* ignore */ }
-        return null;
+        return candidate;
     });
 
-    const results = await Promise.all(tagPromises);
-    for (const cat of results) {
-        if (cat && cat.src) categories.push(cat);
-    }
+    const candidates = await Promise.all(candidatePromises);
+    const categories = assignUniqueCovers(candidates);
 
     const deduped = deduplicateCategories(categories);
     categoriesCache = deduped;
